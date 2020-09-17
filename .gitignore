@@ -1,8 +1,10 @@
 ##
 # General
 ##
+conda-env
+plots
+data
 .DS_Store
-
 
 ##
 # R Section: see https://github.com/github/gitignore/blob/master/R.gitignore
@@ -205,3 +207,4 @@ cython_debug/
 
 # Local History for Visual Studio Code
 .history/
+packrat/lib*/

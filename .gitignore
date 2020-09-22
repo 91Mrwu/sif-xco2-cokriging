@@ -4,6 +4,7 @@
 conda-env
 plots
 data
+research/tmp
 .DS_Store
 
 ##

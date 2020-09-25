@@ -1,0 +1,23 @@
+name: /Users/joshjacobson/Projects/sif-data-fusion/conda-env
+channels:
+  - defaults
+  - conda-forge
+  - r
+dependencies:
+  - r-essentials
+  - r-base
+  - r-tidyverse
+  - rstudio
+  - jupyter
+  - jupyterlab
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - seaborn
+  - cartopy
+  - xarray
+  - dask
+  - netcdf4
+  - palettable
+prefix: /Users/joshjacobson/Projects/sif-data-fusion/conda-env

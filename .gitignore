@@ -5,6 +5,8 @@ conda-env
 plots
 data
 research/tmp
+.mp4
+*.mp4
 .DS_Store
 
 ##

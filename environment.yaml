@@ -1,4 +1,4 @@
-name: /Users/joshjacobson/Projects/sif-data-fusion/conda-env
+name: conda-env
 channels:
   - defaults
   - conda-forge

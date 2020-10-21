@@ -22,4 +22,3 @@ dependencies:
   - netcdf4
   - ffmpeg
   - palettable
-prefix: /Users/joshjacobson/Projects/sif-data-fusion/conda-env

@@ -197,6 +197,8 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Dask
+dask-worker-space/
 
 ##
 # VS Code: see https://github.com/github/gitignore/blob/master/Global/VisualStudioCode.gitignore

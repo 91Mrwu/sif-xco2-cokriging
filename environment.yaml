@@ -13,6 +13,8 @@ dependencies:
   - jupyterlab-git
   - numpy
   - scipy
+  - scikit-learn
+  - statsmodels
   - pandas
   - matplotlib
   - seaborn

@@ -12,6 +12,7 @@ dependencies:
   - jupyterlab
   - jupyterlab-git
   - numpy
+  - numba
   - scipy
   - scikit-learn
   - statsmodels

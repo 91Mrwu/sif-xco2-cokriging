@@ -1,5 +1,6 @@
 # Statistical functions and wrappers
 import numpy as np
+import pandas as pd
 import xarray
 from sklearn.linear_model import LinearRegression
 
@@ -39,19 +40,22 @@ def detrend(x):
         - slope: float
         - z: 1-d numpy array
     """
-    # obtain covariate from array indices
-    data = np.stack([np.arange(x.size), x])
-    data = data[:, ~np.isnan(data).any(axis=0)]
+    if np.isnan(x).all():
+        return (x, np.nan)
+    else:
+        # obtain covariate from array indices
+        data = np.stack([np.arange(x.size), x])
+        data = data[:, ~np.isnan(data).any(axis=0)]
 
-    # fit model and remove trend from non-missing elements
-    X = data[0, :].reshape(-1, 1)
-    y = data[1, :]
-    model = LinearRegression().fit(X, y)
+        # fit model and remove trend from non-missing elements
+        X = data[0, :].reshape(-1, 1)
+        y = data[1, :]
+        model = LinearRegression().fit(X, y)
 
-    z = np.copy(x)
-    z[~np.isnan(z)] = y - model.predict(X)
+        z = np.copy(x)
+        z[~np.isnan(z)] = y - model.predict(X)
 
-    return (z, model.coef_)
+        return (z, model.coef_)
 
 
 def apply_detrend(da):
@@ -67,7 +71,7 @@ def apply_detrend(da):
 
 
 ##
-# Variance
+# Standard deviation
 ##
 def compute_std(da):
     """
@@ -96,7 +100,7 @@ def apply_std(da):
 ##
 # Cross-correlation
 ##
-def compute_xcov_1d(v1, v2, lag):
+def compute_xcor_1d(v1, v2, lag=0):
     """
     Empirical cross-covariance in 1-dimension
     Cressie and Wikle, Eq 5.4, single point.
@@ -110,27 +114,19 @@ def compute_xcov_1d(v1, v2, lag):
     x = (v1 - np.nanmean(v1))[lag:]
     y = (v2 - np.nanmean(v2))[:-lag]
 
-    return np.nanmean(x * y)
+    return np.nanmean(x * y) / np.sqrt(np.nanvar(x) * np.nanvar(y))
 
 
-def compute_xcor_nd(da1, da2, lag):
+def compute_xcor_nd(Z1, Z2, lag=0):
     """
-    Empirical cross-covariance broadcasted over an array
+    Empirical cross-correlation broadcasted over an array
     Cressie and Wikle, Eq 5.4, single location.
     Inputs:
-        - da1, da2: xarray data array (lon x lat x time)
+        - Z1, Z2: xarray data array (lon x lat x time)
         - lag: integer lag
     Outputs:
         - xcor: xarray data array (lon x lat)
     """
-    # remove process means along the time dimension
-    Z1, _ = apply_detrend(da1)
-    Z2, _ = apply_detrend(da2)
-
-    # compute standard deviation along time dimension
-    sig_X = apply_std(Z1)
-    sig_Y = apply_std(Z2)
-
     # apply mask for nan values
     Z1_m = np.ma.array(Z1, mask=np.isnan(Z1))
     Z2_m = np.ma.array(Z2, mask=np.isnan(Z2))
@@ -140,19 +136,64 @@ def compute_xcor_nd(da1, da2, lag):
     Y = (Z2_m - Z2_m.mean(axis=-1, keepdims=True))[:, :, :-lag]
 
     # compute cross-correlation along the time dimension
-    xcor = np.mean(X * Y, axis=-1) / (sig_X * sig_Y)
+    xcor = np.mean(X * Y, axis=-1) / np.sqrt(np.var(X, axis=-1) * np.var(Y, axis=-1))
 
     # return data values with missing entries filled as nan
     return np.ma.filled(xcor.astype(float), np.nan)
 
 
-def apply_cross_covariance(da1, da2, lag=0):
+def apply_xcor(da1, da2, lag=0):
+    # remove process trend along the time dimension
+    Z1, _ = apply_detrend(da1)
+    Z2, _ = apply_detrend(da2)
+
     return xarray.apply_ufunc(
         compute_xcor_nd,
-        da1,
-        da2,
+        Z1,
+        Z2,
         kwargs={"lag": lag},
         input_core_dims=[["time"], ["time"]],
         output_dtypes=[float],
         dask="parallelized",
     )
+
+
+##
+# Wrappers
+##
+def get_stats(DS):
+    """
+    Compute all of the above statistics for SIF and XCO2 data arrays.
+    """
+    DS["sif_count"] = apply_count(DS.sif)
+    DS["xco2_count"] = apply_count(DS.xco2)
+    sif_resid, DS["sif_slope"] = apply_detrend(DS.sif)
+    xco2_resid, DS["xco2_slope"] = apply_detrend(DS.xco2)
+    DS["sif_std"] = apply_std(sif_resid)
+    DS["xco2_std"] = apply_std(xco2_resid)
+    return DS
+
+
+def get_stats_df(df_group, lags=[0]):
+    """
+    Compute the count, slope, std. dev., and cross-cor for SIF and XCO2 dataframe columns.
+    """
+    sif_resid, sif_slope = detrend(df_group["sif"].values)
+    xco2_resid, xco2_slope = detrend(df_group["xco2"].values)
+
+    df = pd.DataFrame(
+        {
+            "sif_count": df_group["sif"].dropna().count(),
+            "xco2_count": df_group["xco2"].dropna().count(),
+            "sif_slope": sif_slope,
+            "xco2_slope": xco2_slope,
+            "sif_std": np.nanstd(sif_resid),
+            "xco2_std": np.nanstd(xco2_resid),
+        }
+    )
+
+    for lag in lags:
+        df[f"xcor_lag{lag}"] = compute_xcor_1d(xco2_resid, sif_resid, lag=lag)
+
+    return df
+

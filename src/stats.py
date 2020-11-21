@@ -73,28 +73,28 @@ def apply_detrend(da):
 ##
 # Standard deviation
 ##
-def compute_std(da):
-    """
-    Compute the standard deviation along the time dimension.
-    Inputs:
-        - da: xarray data array (lon x lat x time)
-    Outputs:
-        - da_var: xarray data array (lon x lat)
-    """
-    # apply mask for nan values
-    da_m = np.ma.array(da, mask=np.isnan(da))
-    sig = np.std(da_m, axis=-1)
-    return np.ma.filled(sig.astype(float), np.nan)
+# def compute_std(da):
+#     """
+#     Compute the standard deviation along the time dimension.
+#     Inputs:
+#         - da: xarray data array (lon x lat x time)
+#     Outputs:
+#         - da_var: xarray data array (lon x lat)
+#     """
+#     # apply mask for nan values
+#     da_m = np.ma.array(da, mask=np.isnan(da))
+#     sig = np.std(da_m, axis=-1)
+#     return np.ma.filled(sig.astype(float), np.nan)
 
 
-def apply_std(da):
-    return xarray.apply_ufunc(
-        compute_std,
-        da,
-        input_core_dims=[["time"]],
-        output_dtypes=[float],
-        dask="parallelized",
-    )
+# def apply_std(da):
+#     return xarray.apply_ufunc(
+#         compute_std,
+#         da,
+#         input_core_dims=[["time"]],
+#         output_dtypes=[float],
+#         dask="parallelized",
+#     )
 
 
 ##
@@ -169,8 +169,10 @@ def get_stats(DS):
     DS["xco2_count"] = apply_count(DS.xco2)
     sif_resid, DS["sif_slope"] = apply_detrend(DS.sif)
     xco2_resid, DS["xco2_slope"] = apply_detrend(DS.xco2)
-    DS["sif_std"] = apply_std(sif_resid)
-    DS["xco2_std"] = apply_std(xco2_resid)
+    # DS["sif_std"] = apply_std(sif_resid)
+    # DS["xco2_std"] = apply_std(xco2_resid)
+    DS["sif_std"] = sif_resid.std(dim="time")
+    DS["xco2_std"] = xco2_resid.std(dim="time")
     return DS
 
 

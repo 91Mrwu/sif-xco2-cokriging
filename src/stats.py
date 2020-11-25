@@ -110,9 +110,13 @@ def compute_xcor_1d(v1, v2, lag=0):
     Outputs:
         - xcov: float
     """
-    # truncate appropriate end of each vector to apply lag
-    x = (v1 - np.nanmean(v1))[lag:]
-    y = (v2 - np.nanmean(v2))[:-lag]
+    # remove the mean along time dim
+    x = v1 - np.nanmean(v1)
+    y = v2 - np.nanmean(v2)
+    if lag is not 0:
+        # truncate along time dim at appropriate position to apply lag
+        x = x[lag:]
+        y = y[:-lag]
 
     return np.nanmean(x * y) / np.sqrt(np.nanvar(x) * np.nanvar(y))
 
@@ -131,12 +135,16 @@ def compute_xcor_nd(Z1, Z2, lag=0):
     Z1_m = np.ma.array(Z1, mask=np.isnan(Z1))
     Z2_m = np.ma.array(Z2, mask=np.isnan(Z2))
 
-    # truncate along time dim at appropriate position to apply lag
-    X = (Z1_m - Z1_m.mean(axis=-1, keepdims=True))[:, :, lag:]
-    Y = (Z2_m - Z2_m.mean(axis=-1, keepdims=True))[:, :, :-lag]
+    # remove the mean along time dim
+    X = Z1_m - Z1_m.mean(axis=-1, keepdims=True)
+    Y = Z2_m - Z2_m.mean(axis=-1, keepdims=True)
+    if lag is not 0:
+        # truncate along time dim at appropriate position to apply lag
+        X = X[:, :, lag:]
+        Y = Y[:, :, :-lag]
 
     # compute cross-correlation along the time dimension
-    xcor = np.mean(X * Y, axis=-1) / np.sqrt(np.var(X, axis=-1) * np.var(Y, axis=-1))
+    xcor = np.mean(X * Y, axis=-1) / np.sqrt(X.var(axis=-1) * Y.var(axis=-1))
 
     # return data values with missing entries filled as nan
     return np.ma.filled(xcor.astype(float), np.nan)

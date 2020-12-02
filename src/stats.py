@@ -100,34 +100,45 @@ def apply_detrend(da):
 ##
 # Cross-correlation
 ##
-def compute_xcor_1d(v1, v2, lag=0):
+def compute_xcor_1d(v1, v2, lag=0, tau=None):
     """
     Empirical cross-covariance in 1-dimension
     Cressie and Wikle, Eq 5.4, single point.
     Inputs:
         - v1, v2: 1-d numpy arrays
         - lag: integer lag
+        - tau: integer threshold indicating minimum number of values needed for a valid computation
     Outputs:
-        - xcov: float
+        - xcor: float
     """
+    # use masked arrays
+    v1_m = np.ma.array(v1, mask=np.isnan(v1))
+    v2_m = np.ma.array(v2, mask=np.isnan(v2))
+
     # remove the mean along time dim
-    x = v1 - np.nanmean(v1)
-    y = v2 - np.nanmean(v2)
+    x = v1_m - v1_m.mean()
+    y = v2_m - v2_m.mean()
     if lag is not 0:
         # truncate along time dim at appropriate position to apply lag
         x = x[lag:]
         y = y[:-lag]
 
-    return np.nanmean(x * y) / np.sqrt(np.nanvar(x) * np.nanvar(y))
+    if tau is not None:
+        if np.count_nonzero(~np.isnan(x * y)) < tau:
+            return np.nan
+
+    xcor = np.sum(x * y) / (np.sqrt(np.sum(x * x)) * np.sqrt(np.sum(y * y)))
+    return np.ma.filled(xcor.astype(float), np.nan)
 
 
-def compute_xcor_nd(Z1, Z2, lag=0):
+def compute_xcor_nd(Z1, Z2, lag=0, tau=None):
     """
     Empirical cross-correlation broadcasted over an array
     Cressie and Wikle, Eq 5.4, single location.
     Inputs:
         - Z1, Z2: xarray data array (lon x lat x time)
         - lag: integer lag
+        - tau: integer threshold indicating minimum number of values needed for a valid computation
     Outputs:
         - xcor: xarray data array (lon x lat)
     """
@@ -144,13 +155,21 @@ def compute_xcor_nd(Z1, Z2, lag=0):
         Y = Y[:, :, :-lag]
 
     # compute cross-correlation along the time dimension
-    xcor = np.mean(X * Y, axis=-1) / np.sqrt(X.var(axis=-1) * Y.var(axis=-1))
+    xcor = np.sum(X * Y, axis=-1) / (
+        np.sqrt(np.sum(X * X, axis=-1)) * np.sqrt(np.sum(Y * Y, axis=-1))
+    )
+
+    if tau:
+        # mask out computations which use fewer than tau non-missing values
+        xcor = np.ma.masked_where(
+            np.count_nonzero(~np.isnan(X * Y), axis=-1) < tau, xcor
+        )
 
     # return data values with missing entries filled as nan
     return np.ma.filled(xcor.astype(float), np.nan)
 
 
-def apply_xcor(da1, da2, lag=0):
+def apply_xcor(da1, da2, lag=0, tau=None):
     # remove process trend along the time dimension
     Z1, _ = apply_detrend(da1)
     Z2, _ = apply_detrend(da2)
@@ -159,7 +178,7 @@ def apply_xcor(da1, da2, lag=0):
         compute_xcor_nd,
         Z1,
         Z2,
-        kwargs={"lag": lag},
+        kwargs={"lag": lag, "tau": tau},
         input_core_dims=[["time"], ["time"]],
         output_dtypes=[float],
         dask="parallelized",

@@ -203,7 +203,7 @@ def get_stats(DS):
     return DS
 
 
-def get_stats_df(df_group, lags=[0]):
+def get_stats_df(df_group, lags=[0], tau=None):
     """
     Compute the count, slope, std. dev., and cross-cor for SIF and XCO2 dataframe columns.
     """
@@ -222,7 +222,7 @@ def get_stats_df(df_group, lags=[0]):
     )
 
     for lag in lags:
-        df[f"xcor_lag{lag}"] = compute_xcor_1d(xco2_resid, sif_resid, lag=lag)
+        df[f"xcor_lag{lag}"] = compute_xcor_1d(xco2_resid, sif_resid, lag=lag, tau=tau)
 
     return df
 

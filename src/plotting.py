@@ -1,6 +1,7 @@
 # Custom plotting wrappers
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import cartopy
 import xarray
 
@@ -33,6 +34,7 @@ def plot_da(
         robust=robust,
         add_colorbar=add_colorbar,
     )
-    ax.coastlines()
+    ax.add_feature(cfeature.OCEAN, zorder=9)
+    ax.coastlines(zorder=10)
     ax.set_title(title, size=14)
     return (ax, cbar_ax)

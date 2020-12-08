@@ -102,8 +102,7 @@ def apply_detrend(da):
 ##
 def compute_xcor_1d(v1, v2, lag=0, tau=None):
     """
-    Empirical cross-covariance in 1-dimension
-    Cressie and Wikle, Eq 5.4, single point.
+    Empirical cross-correlation in 1-dimension
     Inputs:
         - v1, v2: 1-d numpy arrays
         - lag: integer lag
@@ -134,7 +133,6 @@ def compute_xcor_1d(v1, v2, lag=0, tau=None):
 def compute_xcor_nd(Z1, Z2, lag=0, tau=None):
     """
     Empirical cross-correlation broadcasted over an array
-    Cressie and Wikle, Eq 5.4, single location.
     Inputs:
         - Z1, Z2: xarray data array (lon x lat x time)
         - lag: integer lag
@@ -149,7 +147,7 @@ def compute_xcor_nd(Z1, Z2, lag=0, tau=None):
     # remove the mean along time dim
     X = Z1_m - Z1_m.mean(axis=-1, keepdims=True)
     Y = Z2_m - Z2_m.mean(axis=-1, keepdims=True)
-    if lag is not 0:
+    if lag != 0:
         # truncate along time dim at appropriate position to apply lag
         X = X[:, :, lag:]
         Y = Y[:, :, :-lag]
@@ -182,6 +180,55 @@ def apply_xcor(da1, da2, lag=0, tau=None):
         input_core_dims=[["time"], ["time"]],
         output_dtypes=[float],
         dask="parallelized",
+    )
+
+
+def optim_lag_nd(da1, da2, lag_bnds, tau=None):
+    """
+    Determine which lag maximizes the absolute value of the cross-correlation along the time dimension.
+    Inputs:
+        - da1, da2: xarray data array (lon x lat x time)
+        - lag_bnds: (low, high) tuple of integer bounds
+        - tau: integer threshold indicating minimum number of values needed for a valid computation
+    Outputs:
+        - optim_lag: xarray data array (lon x lat)
+    """
+    # remove process trend along the time dimension
+    Z1, _ = apply_detrend(da1)
+    Z2, _ = apply_detrend(da2)
+
+    # compute an xcor field for each lag in specified range
+    lags = np.arange(*lag_bnds)
+    xcor_fields = []
+    [
+        xcor_fields.append(
+            xarray.apply_ufunc(
+                compute_xcor_nd,
+                Z1,
+                Z2,
+                kwargs={"lag": lag, "tau": tau},
+                input_core_dims=[["time"], ["time"]],
+                output_dtypes=[float],
+                dask="parallelized",
+            ).values
+        )
+        for lag in lags
+    ]
+
+    # overlay fields along new lag axis, and compute argmax along that axis
+    xcor_stack = np.stack(xcor_fields, axis=2)
+    xcor_stack = np.ma.array(xcor_stack, mask=np.isnan(xcor_stack))
+
+    # NOTE: if slice is all nans, this will return an optimal lag of 0 (ok as long as data array itself is masked)
+    optim_lag = np.ma.argmax(np.abs(xcor_stack), axis=2)
+    xcor = np.squeeze(
+        np.take_along_axis(xcor_stack, np.expand_dims(optim_lag, axis=2), 2), axis=2
+    )
+
+    # return data set with arrays optimal lag and corresponding xcor for each element
+    return xarray.Dataset(
+        {"optim_lag": (["lon", "lat"], optim_lag), "xcor": (["lon", "lat"], xcor),},
+        coords={"lon": da1.lon, "lat": da1.lat,},
     )
 
 

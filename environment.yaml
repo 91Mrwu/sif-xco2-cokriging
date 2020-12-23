@@ -13,10 +13,11 @@ dependencies:
   - jupyterlab-git
   - numpy
   - numba
+  - pandas
   - scipy
   - scikit-learn
   - statsmodels
-  - pandas
+  - geopy
   - matplotlib
   - seaborn
   - cartopy

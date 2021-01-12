@@ -4,10 +4,12 @@ channels:
   - conda-forge
   - r
 dependencies:
+# R tools
   - r-essentials
   - r-base
   - r-tidyverse
   - rstudio
+# Core python
   - jupyter
   - jupyterlab
   - jupyterlab-git
@@ -15,15 +17,19 @@ dependencies:
   - numba
   - pandas
   - scipy
-  - scikit-learn
-  - statsmodels
-  - geopy
-  - matplotlib
-  - seaborn
-  - cartopy
+# Data management
   - xarray
   - dask
   - netcdf4
   - h5netcdf
+# Statistics
+  - scikit-learn
+  - statsmodels
+  - geopy
+  - gstools
+# Plotting
+  - matplotlib
+  - seaborn
+  - cartopy
   - ffmpeg
   - palettable

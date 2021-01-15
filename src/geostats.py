@@ -51,7 +51,7 @@ class Field:
     """
 
     def __init__(self, da, timestamp):
-        df = da.sel(time=timestamp).to_dataframe().reset_index()
+        df = da.sel(time=timestamp).to_dataframe().reset_index().dropna()
         self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
         self.coords = df[["lat", "lon"]].values
         self.values = df.values[:, -1]
@@ -79,7 +79,7 @@ class MultiField:
 class Matern:
     """The Matern covariance model."""
 
-    def __init__(self, sigma=1.0, nu=1.0, len_scale=1.0, nugget=0.0):
+    def __init__(self, sigma=1.0, nu=1.5, len_scale=1.0, nugget=0.0):
         self.sigma = sigma  # process standard deviation
         self.nu = nu  # smoothess parameter
         self.len_scale = len_scale  # length scale parameter
@@ -115,13 +115,17 @@ class Matern:
 class BivariateMatern:
     """Bivariate Matern kernel, or correlation function"""
 
-    def __init__(self, kernel_1, kernel_2, rho=1.0, nu_b=1.0, len_scale_b=1.0):
+    def __init__(self, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=1.0):
         self.rho = rho  # co-located correlation coefficient
-        self.nu_b = nu_b  # joint smoothness
         self.len_scale_b = len_scale_b  # joint length scale parameter
+        # joint smoothness
+        if nu_b is None:
+            self.nu_b = 0.5 * (kernel_1.nu + kernel_2.nu)
+        else:
+            self.nu_b = nu_b
         self.kernel_1 = kernel_1
         self.kernel_2 = kernel_2
-        self.kernel_b = Matern(nu=nu_b, len_scale=len_scale_b)
+        self.kernel_b = Matern(nu=self.nu_b, len_scale=self.len_scale_b)
 
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s)."""
@@ -143,6 +147,7 @@ class BivariateMatern:
     def covariance_matrix(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix."""
         ## TODO: add measurement error term for C_11 and C_22
+        ## NOTE: issues with pos. def. (maybe above will help, also check off diag params)
         C_11 = (
             self.kernel_1.sigma ** 2
             * self.kernel_1.correlation(dist_blocks["block_11"])
@@ -242,10 +247,12 @@ class Cokrige(MultiField):
         ## Prediction
         self.pred = np.matmul(Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z))
 
-        ## Variance
-        self.pred_err = Sigma_11 - np.matmul(
+        ## Standard error
+        pred_cov = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
+        # TODO: confirm that this is the correct formula for std. err.
+        self.pred_err = np.sqrt(np.diagonal(pred_cov)) / np.sqrt(len(Z))
 
         return self.pred, self.pred_err
 
@@ -290,8 +297,8 @@ class Cokrige(MultiField):
             "block_12": off_diag,
             "block_21": off_diag.T,
             "block_22": distance_matrix(
-                self.field_1.coords,
-                self.field_1.coords,
+                self.field_2.coords,
+                self.field_2.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),

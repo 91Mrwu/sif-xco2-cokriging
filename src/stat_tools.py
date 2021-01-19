@@ -4,9 +4,7 @@ import pandas as pd
 import xarray
 from sklearn.linear_model import LinearRegression
 
-##
-# Counts / replications
-##
+## Counts / replications
 def get_count(da):
     """
     Count non-missing elements along the time dimension.
@@ -28,9 +26,7 @@ def apply_count(da):
     )
 
 
-##
-# Trend fitting
-##
+## Trend fitting
 def detrend(x):
     """
     Fit and remove a trend from a vector with indices as the covariate. Return the detrended vector and the slope of the trend seperately.
@@ -41,7 +37,7 @@ def detrend(x):
         - z: 1-d numpy array
     """
     if np.isnan(x).all():
-        return (x, np.nan)
+        return x, np.nan
     else:
         # obtain covariate from array indices
         data = np.stack([np.arange(x.size), x])
@@ -55,7 +51,7 @@ def detrend(x):
         z = np.copy(x)
         z[~np.isnan(z)] = y - model.predict(X)
 
-        return (z, model.coef_)
+        return z, model.coef_
 
 
 def apply_detrend(da):
@@ -70,36 +66,7 @@ def apply_detrend(da):
     )
 
 
-##
-# Standard deviation
-##
-# def compute_std(da):
-#     """
-#     Compute the standard deviation along the time dimension.
-#     Inputs:
-#         - da: xarray data array (lon x lat x time)
-#     Outputs:
-#         - da_var: xarray data array (lon x lat)
-#     """
-#     # apply mask for nan values
-#     da_m = np.ma.array(da, mask=np.isnan(da))
-#     sig = np.std(da_m, axis=-1)
-#     return np.ma.filled(sig.astype(float), np.nan)
-
-
-# def apply_std(da):
-#     return xarray.apply_ufunc(
-#         compute_std,
-#         da,
-#         input_core_dims=[["time"]],
-#         output_dtypes=[float],
-#         dask="parallelized",
-#     )
-
-
-##
-# Cross-correlation
-##
+## Cross-correlation
 def compute_xcor_1d(v1, v2, lag=0, tau=None):
     """
     Empirical cross-correlation in 1-dimension
@@ -232,9 +199,7 @@ def optim_lag_nd(da1, da2, lag_bnds, tau=None):
     )
 
 
-##
-# Wrappers
-##
+## Wrappers
 def get_stats(DS):
     """
     Compute all of the above statistics for SIF and XCO2 data arrays.
@@ -243,8 +208,6 @@ def get_stats(DS):
     DS["xco2_count"] = apply_count(DS.xco2)
     sif_resid, DS["sif_slope"] = apply_detrend(DS.sif)
     xco2_resid, DS["xco2_slope"] = apply_detrend(DS.xco2)
-    # DS["sif_std"] = apply_std(sif_resid)
-    # DS["xco2_std"] = apply_std(xco2_resid)
     DS["sif_std"] = sif_resid.std(dim="time")
     DS["xco2_std"] = xco2_resid.std(dim="time")
     return DS

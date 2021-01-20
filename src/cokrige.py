@@ -6,7 +6,7 @@ import fields
 import cov_model
 
 
-class Cokrige(fields.MultiField):
+class Cokrige:
     """
     Details and references
 
@@ -14,8 +14,8 @@ class Cokrige(fields.MultiField):
     - remove field means and/or standardize data
     """
 
-    def __init__(self, field_1, field_2, model, dist_units="km", fast_dist=False):
-        super().__init__(field_1, field_2)
+    def __init__(self, fields, model, dist_units="km", fast_dist=False):
+        self.fields = fields
         self.model = model
         self.dist_units = dist_units
         self.fast_dist = fast_dist
@@ -32,7 +32,7 @@ class Cokrige(fields.MultiField):
         # cokriging joint covariance matrix
         Sigma_22 = self._get_joint_cov()
         # data vector
-        Z = np.hstack((self.field_1.values, self.field_2.values))
+        Z = np.hstack((self.fields.field_1.values, self.fields.field_2.values))
 
         ## Prediction
         self.pred = np.matmul(Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z))
@@ -56,13 +56,13 @@ class Cokrige(fields.MultiField):
         return {
             "block_11": krige_tools.distance_matrix(
                 pred_loc,
-                self.field_1.coords,
+                self.fields.field_1.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),
             "block_12": krige_tools.distance_matrix(
                 pred_loc,
-                self.field_2.coords,
+                self.fields.field_2.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),
@@ -71,23 +71,23 @@ class Cokrige(fields.MultiField):
     def _get_joint_dists(self):
         """Computes block distance matrices and returns the blocks in a dict."""
         off_diag = krige_tools.distance_matrix(
-            self.field_1.coords,
-            self.field_2.coords,
+            self.fields.field_1.coords,
+            self.fields.field_2.coords,
             units=self.dist_units,
             fast_dist=self.fast_dist,
         )
         return {
             "block_11": krige_tools.distance_matrix(
-                self.field_1.coords,
-                self.field_1.coords,
+                self.fields.field_1.coords,
+                self.fields.field_1.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),
             "block_12": off_diag,
             "block_21": off_diag.T,
             "block_22": krige_tools.distance_matrix(
-                self.field_2.coords,
-                self.field_2.coords,
+                self.fields.field_2.coords,
+                self.fields.field_2.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),

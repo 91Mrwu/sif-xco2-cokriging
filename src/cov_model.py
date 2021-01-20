@@ -120,7 +120,7 @@ class BivariateMatern:
         return params
 
     def _empirical_kernels(
-        self, field_1, field_2, bin_edges, sampling_size=None, sampling_seed=None
+        self, fields, bin_edges, sampling_size=None, sampling_seed=None
     ):
         """
         Collects parameters needed for construction of process kernels and cross-kernels.
@@ -128,10 +128,16 @@ class BivariateMatern:
         TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
         """
         params_1 = self._params_from_variogram(
-            field_1, bin_edges, sampling_size=sampling_size, sampling_seed=sampling_seed
+            fields.field_1,
+            bin_edges,
+            sampling_size=sampling_size,
+            sampling_seed=sampling_seed,
         )
         params_2 = self._params_from_variogram(
-            field_2, bin_edges, sampling_size=sampling_size, sampling_seed=sampling_seed
+            fields.field_2,
+            bin_edges,
+            sampling_size=sampling_size,
+            sampling_seed=sampling_seed,
         )
 
         self.kernel_1 = Matern(
@@ -150,12 +156,15 @@ class BivariateMatern:
             nu=0.5 * (self.kernel_1.nu + self.kernel_2.nu),
             len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
         )
-        self.rho = pearsonr(*krige_tools.match_data_locations(field_1, field_2))[0]
+        self.rho = pearsonr(*krige_tools.match_data_locations(fields.field_1, fields.field_2))[0]
 
         return self
 
     def get_params(self):
-        """Returns model parameters in a dict."""
+        """Returns model parameters in a dict.
+        
+        NOTE: ultimately, each of these should be a vector or matrix of values.
+        """
         return {
             "sigma_11": self.kernel_1.sigma,
             "nu_11": self.kernel_1.nu,

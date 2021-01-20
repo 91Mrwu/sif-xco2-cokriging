@@ -6,9 +6,39 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
 
-def preprocess_da(da, detrend=False, standardize=False):
-    """Preprocess a data array for cokriging."""
-    return da
+from stat_tools import apply_detrend
+import krige_tools
+
+"""
+TODO: SIF values are on the order of 0-8, where XCO2 values are in the hundreds. Since XCO2 is easiest to preform a unit conversion on, apply a scale factor of 1/1000 to convert units to parts per billion.
+"""
+
+
+def get_field_names(ds):
+    """Returns data and estimated variance names from dataset."""
+    var_name = [name for name in list(ds.keys()) if "_var" in name][0]
+    data_name = var_name.replace("_var", "")
+    return data_name, var_name
+
+
+def preprocess_ds(ds, detrend=False, standardize=False, scale_fact=None):
+    """Apply data transformations and compute surface mean and standard deviation."""
+    data_name, var_name = krige_tools.get_field_names(ds)
+
+    if detrend:
+        ds[data_name], _ = apply_detrend(ds[data_name])
+
+    ds["mean"] = ds[data_name].mean(dim="time")
+    ds["std"] = ds[data_name].std(dim="time")
+
+    if standardize:
+        ds[data_name] = (ds[data_name] - ds["mean"]) / ds["std"]
+
+    if scale_fact is not None:
+        ds[data_name] = scale_fact * ds[data_name]
+        ds[var_name] = scale_fact * ds[var_name]
+
+    return ds
 
 
 def expand_grid(*args):

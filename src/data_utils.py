@@ -85,21 +85,34 @@ def read_transcom(path):
 
 
 ## Formatting
+def global_grid(res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
+    """Establish longitude and latitude bins and centerpoints on a global grid."""
+    lon_bins = np.arange(lon_lwr, lon_upr + res, res)
+    lat_bins = np.arange(lat_lwr, lat_upr + res, res)
+    lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
+    lat_centers = (lat_bins[1:] + lat_bins[:-1]) / 2
+    return {
+        "lon_bins": lon_bins,
+        "lon_centers": lon_centers,
+        "lat_bins": lat_bins,
+        "lat_centers": lat_centers,
+    }
+
+
 def regrid(ds, res=1):
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
     """
     df = ds.to_dataframe()
-
-    # establish grid
-    lon_bins = np.arange(-180, 180 + res, res)
-    lat_bins = np.arange(-90, 90 + res, res)
-    lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
-    lat_centers = (lat_bins[1:] + lat_bins[:-1]) / 2
+    grid = global_grid(res)
 
     # overwrite lon-lat values with grid values
-    df["lon"] = pd.cut(df.lon, lon_bins, labels=lon_centers).astype(float)
-    df["lat"] = pd.cut(df.lat, lat_bins, labels=lat_centers).astype(float)
+    df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
+        float
+    )
+    df["lat"] = pd.cut(df.lat, grid["lat_bins"], labels=grid["lat_centers"]).astype(
+        float
+    )
 
     return df
 
@@ -120,4 +133,16 @@ def map_transcom(ds, ds_tc):
         .drop(columns=["lon", "lat"])
         .dropna()
         .set_index(["time"])
+    )
+
+
+def to_xarray(coords, **kwargs):
+    """Format data variables as xarray data array or dataset.
+    
+    NOTE: coords must be formatted in rows as [[lat, lon]].
+    """
+    return (
+        pd.DataFrame({**{"lat": coords[:, 0], "lon": coords[:, 1]}, **kwargs})
+        .set_index(["lon", "lat"])
+        .to_xarray()
     )

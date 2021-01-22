@@ -49,7 +49,9 @@ class BivariateMatern:
     - we may want to use empirical standard deviation (temporal or spatial replication) for sigmas 
     """
 
-    def __init__(self, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=None):
+    def __init__(
+        self, fields, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=None
+    ):
         self.rho = rho  # co-located correlation coefficient
         if nu_b is None:
             nu_b = 0.5 * (kernel_1.nu + kernel_2.nu)
@@ -58,6 +60,10 @@ class BivariateMatern:
         self.kernel_1 = kernel_1
         self.kernel_2 = kernel_2
         self.kernel_b = Matern(nu=nu_b, len_scale=len_scale_b)
+
+        self.fields = fields
+        self.sigep_11 = fields.field_1.variance_estimate.mean()
+        self.sigep_22 = fields.field_2.variance_estimate.mean()
 
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s)."""
@@ -75,7 +81,6 @@ class BivariateMatern:
 
     def covariance_matrix(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix."""
-        ## TODO: add measurement error term for C_11 and C_22
         ## NOTE: issues with pos. def. (maybe above will help, also check off diag params)
         C_11 = (
             self.kernel_1.sigma ** 2
@@ -99,6 +104,11 @@ class BivariateMatern:
             * self.kernel_2.correlation(dist_blocks["block_22"])
             + self.kernel_2.nugget
         )
+
+        # add measurement error variance along diagonals
+        np.fill_diagonal(C_11, C_11.diagonal() + self.sigep_11)
+        np.fill_diagonal(C_22, C_22.diagonal() + self.sigep_22)
+
         # stack blocks into joint covariance matrix
         return np.block([[C_11, C_12], [C_21, C_22]])
 
@@ -119,22 +129,20 @@ class BivariateMatern:
         params, _ = fit_model.fit_variogram(bin_center, gamma)
         return params
 
-    def _empirical_kernels(
-        self, fields, bin_edges, sampling_size=None, sampling_seed=None
-    ):
+    def _empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
         """
         Collects parameters needed for construction of process kernels and cross-kernels.
 
         TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
         """
         params_1 = self._params_from_variogram(
-            fields.field_1,
+            self.fields.field_1,
             bin_edges,
             sampling_size=sampling_size,
             sampling_seed=sampling_seed,
         )
         params_2 = self._params_from_variogram(
-            fields.field_2,
+            self.fields.field_2,
             bin_edges,
             sampling_size=sampling_size,
             sampling_seed=sampling_seed,
@@ -156,7 +164,9 @@ class BivariateMatern:
             nu=0.5 * (self.kernel_1.nu + self.kernel_2.nu),
             len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
         )
-        self.rho = pearsonr(*krige_tools.match_data_locations(fields.field_1, fields.field_2))[0]
+        self.rho = pearsonr(
+            *krige_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
+        )[0]
 
         return self
 
@@ -170,7 +180,7 @@ class BivariateMatern:
             "nu_11": self.kernel_1.nu,
             "len_scale_11": self.kernel_1.len_scale,
             "nugget_11": self.kernel_1.nugget,
-            "epsilon_11": np.nan,
+            "sigep_11": self.sigep_11,
             "nu_12": self.kernel_b.nu,
             "len_scale_12": self.kernel_b.len_scale,
             "rho": self.rho,
@@ -178,5 +188,5 @@ class BivariateMatern:
             "nu_22": self.kernel_2.nu,
             "len_scale_22": self.kernel_2.len_scale,
             "nugget_22": self.kernel_2.nugget,
-            "epsilon_22": np.nan,
+            "sigep_22": self.sigep_22,
         }

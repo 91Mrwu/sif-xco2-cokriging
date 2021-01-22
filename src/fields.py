@@ -1,6 +1,9 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+import pandas as pd
+import xarray as xr
+
 import krige_tools
 
 
@@ -10,12 +13,23 @@ class Field:
     """
 
     def __init__(
-        self, ds, timestamp, detrend=False, standardize=False, scale_fact=None
+        self,
+        ds,
+        timestamp,
+        detrend=False,
+        center=False,
+        standardize=False,
+        scale_fact=None,
     ):
         data_name, var_name = krige_tools.get_field_names(ds)
         ds = krige_tools.preprocess_ds(
-            ds, detrend=detrend, standardize=standardize, scale_fact=scale_fact
+            ds,
+            detrend=detrend,
+            center=center,
+            standardize=standardize,
+            scale_fact=scale_fact,
         )
+        # TODO: add flags for types of transformations applied
 
         df = ds.sel(time=timestamp).to_dataframe().reset_index().dropna()
         self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
@@ -24,6 +38,20 @@ class Field:
         self.mean = df["mean"].values
         self.std = df["std"].values
         self.variance_estimate = df[var_name].values
+
+    def to_xarray(self):
+        """Converts the field to an xarray dataset."""
+        return (
+            pd.DataFrame(
+                {
+                    "lat": self.coords[:, 0],
+                    "lon": self.coords[:, 1],
+                    "values": self.values,
+                }
+            )
+            .set_index(["lon", "lat"])
+            .to_xarray()
+        )
 
 
 class MultiField:
@@ -38,6 +66,7 @@ class MultiField:
         timestamp,
         timedelta=0,
         detrend=False,
+        center=False,
         standardize=False,
         scale_fact=(None, None),
     ):

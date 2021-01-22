@@ -1,17 +1,14 @@
 import numpy as np
 import pandas as pd
 import xarray as xr
+import regionmask
 
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
 
 from stat_tools import apply_detrend
-import krige_tools
-
-"""
-TODO: SIF values are on the order of 0-8, where XCO2 values are in the hundreds. Since XCO2 is easiest to preform a unit conversion on, apply a scale factor of 1/1000 to convert units to parts per billion.
-"""
+import data_utils
 
 
 def get_field_names(ds):
@@ -21,15 +18,20 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def preprocess_ds(ds, detrend=False, standardize=False, scale_fact=None):
+def preprocess_ds(ds, detrend=False, center=False, standardize=False, scale_fact=None):
     """Apply data transformations and compute surface mean and standard deviation."""
-    data_name, var_name = krige_tools.get_field_names(ds)
+    data_name, var_name = get_field_names(ds)
 
+    # TODO: get actual trend so it can be added back to field in prediction
     if detrend:
         ds[data_name], _ = apply_detrend(ds[data_name])
 
     ds["mean"] = ds[data_name].mean(dim="time")
     ds["std"] = ds[data_name].std(dim="time")
+
+    # TODO: throw warning if both center and standardize are True
+    if center:
+        ds[data_name] = ds[data_name] - ds["mean"]
 
     if standardize:
         ds[data_name] = (ds[data_name] - ds["mean"]) / ds["std"]
@@ -89,3 +91,21 @@ def match_data_locations(field_1, field_2):
     )
     df = pd.merge(df_1, df_2, on=["lat", "lon"], suffixes=("_1", "_2"))
     return df.values_1, df.values_2
+
+
+def land_grid(res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
+    """Collect land locations on a regular grid as an array.
+
+    Returns rows with entries [[lat, lon]].
+    NOTE: 
+    - input to land.mask() could be the cause of slightly different grid?
+    - other option is to pull from SIF grid
+    """
+    grid = data_utils.global_grid(
+        res, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
+    )
+    land = regionmask.defined_regions.natural_earth.land_110
+    mask = land.mask(grid["lon_centers"], grid["lat_centers"])
+    df_mask = mask.to_dataframe().reset_index().dropna(subset=["region"])
+    return df_mask[["lat", "lon"]].values
+

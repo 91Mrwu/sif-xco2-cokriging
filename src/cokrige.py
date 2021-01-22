@@ -35,13 +35,17 @@ class Cokrige:
         Z = np.hstack((self.fields.field_1.values, self.fields.field_2.values))
 
         ## Prediction
+        # TODO: refactor to seperate function to handle mean, trend, transforms, etc.
+        # NOTE: how do we add the mean at new locations? we need a mean function, not vector.
+        # self.fields.field_1.mean
         self.pred = np.matmul(Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z))
 
         ## Standard error
         self.pred_cov = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
-        self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
+        # TODO: handle cases with negative entries appropriately
+        self.pred_error = np.sqrt(np.abs(np.diagonal(self.pred_cov)))
 
         return self.pred, self.pred_error
 

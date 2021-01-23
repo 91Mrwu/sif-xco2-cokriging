@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
+from scipy.interpolate import griddata
 
 import krige_tools
 import fields
@@ -36,9 +37,9 @@ class Cokrige:
 
         ## Prediction
         # TODO: refactor to seperate function to handle mean, trend, transforms, etc.
-        # NOTE: how do we add the mean at new locations? we need a mean function, not vector.
-        # self.fields.field_1.mean
-        self.pred = np.matmul(Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z))
+        self.pred = self._get_pred_mean(pred_loc) + np.matmul(
+            Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z)
+        )
 
         ## Standard error
         self.pred_cov = Sigma_11 - np.matmul(
@@ -46,6 +47,7 @@ class Cokrige:
         )
         # TODO: handle cases with negative entries appropriately
         self.pred_error = np.sqrt(np.abs(np.diagonal(self.pred_cov)))
+        # self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
 
         return self.pred, self.pred_error
 
@@ -108,3 +110,16 @@ class Cokrige:
     def _get_joint_cov(self):
         """Computes the cokriging joint covariance matrix."""
         return self.model.covariance_matrix(self._get_joint_dists())
+
+    def _get_pred_mean(self, pred_loc):
+        """Fits the surface mean at prediction locations using the supplied mean function.
+        
+        TODO: make mean function more flexible.
+        """
+        return griddata(
+            self.fields.field_1.coords,
+            self.fields.field_1.mean,
+            pred_loc,
+            method="nearest",
+        )
+

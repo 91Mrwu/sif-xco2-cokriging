@@ -103,7 +103,7 @@ def regrid(ds, res=1):
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
     """
-    df = ds.to_dataframe()
+    df = ds.to_dataframe().reset_index()
     grid = global_grid(res)
 
     # overwrite lon-lat values with grid values

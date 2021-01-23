@@ -97,15 +97,20 @@ def land_grid(res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
     """Collect land locations on a regular grid as an array.
 
     Returns rows with entries [[lat, lon]].
-    NOTE: 
-    - input to land.mask() could be the cause of slightly different grid?
-    - other option is to pull from SIF grid
     """
+    # establish a fine resolution grid of 0.25 degrees for accuracy
     grid = data_utils.global_grid(
-        res, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
+        0.25, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
     )
     land = regionmask.defined_regions.natural_earth.land_110
     mask = land.mask(grid["lon_centers"], grid["lat_centers"])
-    df_mask = mask.to_dataframe().reset_index().dropna(subset=["region"])
+    # regrid to desired resolution and remove non-land areas
+    df_mask = (
+        data_utils.regrid(mask, res=res)
+        .dropna(subset=["region"])
+        .groupby(["lon", "lat"])
+        .mean()
+        .reset_index()
+    )
     return df_mask[["lat", "lon"]].values
 

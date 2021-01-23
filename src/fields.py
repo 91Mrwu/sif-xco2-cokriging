@@ -76,6 +76,7 @@ class MultiField:
             ds_1,
             timestamp,
             detrend=detrend,
+            center=center,
             standardize=standardize,
             scale_fact=scale_fact[0],
         )
@@ -83,6 +84,7 @@ class MultiField:
             ds_2,
             self._apply_timedelta(),
             detrend=detrend,
+            center=center,
             standardize=standardize,
             scale_fact=scale_fact[1],
         )

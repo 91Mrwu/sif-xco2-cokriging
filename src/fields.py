@@ -21,6 +21,9 @@ class Field:
         standardize=False,
         scale_fact=None,
     ):
+        # self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
+        self.timestamp = timestamp
+
         data_name, var_name = krige_tools.get_field_names(ds)
         ds = krige_tools.preprocess_ds(
             ds,
@@ -30,13 +33,11 @@ class Field:
             scale_fact=scale_fact,
         )
         # TODO: add flags for types of transformations applied
+        # TODO: is it possible to investigate the assumption of unbiased error?
 
         df = ds.sel(time=timestamp).to_dataframe().reset_index().dropna()
-        self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
         self.coords = df[["lat", "lon"]].values
         self.values = df[data_name].values
-        self.mean = df["mean"].values
-        self.std = df["std"].values
         self.variance_estimate = df[var_name].values
 
     def to_xarray(self):
@@ -72,6 +73,8 @@ class MultiField:
     ):
         self.timestamp = timestamp
         self.timedelta = timedelta
+        self.ds_1 = ds_1
+        self.ds_2 = ds_2
         self.field_1 = Field(
             ds_1,
             timestamp,

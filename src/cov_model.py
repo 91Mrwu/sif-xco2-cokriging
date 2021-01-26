@@ -33,8 +33,8 @@ class Matern:
         res[h > 0.0] = np.exp(
             (1.0 - self.nu) * np.log(2)
             - sps.gammaln(self.nu)
-            + self.nu * np.log(np.sqrt(self.nu) * h_gz / self.len_scale)
-        ) * sps.kv(self.nu, np.sqrt(self.nu) * h_gz / self.len_scale)
+            + self.nu * np.log(np.sqrt(2 * self.nu) * h_gz / self.len_scale)
+        ) * sps.kv(self.nu, np.sqrt(2 * self.nu) * h_gz / self.len_scale)
         # if nu >> 1 we get errors for the farfield, there 0 is approached
         res[np.logical_not(np.isfinite(res))] = 0.0
         # covariance is positive
@@ -82,10 +82,9 @@ class BivariateMatern:
     def covariance_matrix(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix."""
         ## NOTE: issues with pos. def. (maybe above will help, also check off diag params)
-        C_11 = (
-            self.kernel_1.sigma ** 2
-            * self.kernel_1.correlation(dist_blocks["block_11"])
-            + self.kernel_1.nugget
+        ## TODO: investigate matrices; are the diagonals just sigma^2?
+        C_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
+            dist_blocks["block_11"]
         )
         C_12 = (
             self.rho
@@ -99,15 +98,13 @@ class BivariateMatern:
             * self.kernel_2.sigma
             * self.kernel_b.correlation(dist_blocks["block_21"])
         )
-        C_22 = (
-            self.kernel_2.sigma ** 2
-            * self.kernel_2.correlation(dist_blocks["block_22"])
-            + self.kernel_2.nugget
+        C_22 = self.kernel_2.sigma ** 2 * self.kernel_2.correlation(
+            dist_blocks["block_22"]
         )
 
         # add measurement error variance along diagonals
-        np.fill_diagonal(C_11, C_11.diagonal() + self.sigep_11)
-        np.fill_diagonal(C_22, C_22.diagonal() + self.sigep_22)
+        np.fill_diagonal(C_11, C_11.diagonal() + self.kernel_1.nugget + self.sigep_11)
+        np.fill_diagonal(C_22, C_22.diagonal() + self.kernel_2.nugget + self.sigep_22)
 
         # stack blocks into joint covariance matrix
         return np.block([[C_11, C_12], [C_21, C_22]])

@@ -37,7 +37,8 @@ class Cokrige:
 
         ## Prediction
         # TODO: refactor to seperate function to handle mean, trend, transforms, etc.
-        self.pred = self._get_pred_mean(pred_loc) + np.matmul(
+        mu = self._get_pred_mean(pred_loc, ds=self.fields.ds_1)
+        self.pred = mu + np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z)
         )
 
@@ -111,15 +112,22 @@ class Cokrige:
         """Computes the cokriging joint covariance matrix."""
         return self.model.covariance_matrix(self._get_joint_dists())
 
-    def _get_pred_mean(self, pred_loc):
+    def _get_pred_mean(self, pred_loc, method="temporal", ds=None):
         """Fits the surface mean at prediction locations using the supplied mean function.
         
         TODO: make mean function more flexible.
         """
-        return griddata(
-            self.fields.field_1.coords,
-            self.fields.field_1.mean,
-            pred_loc,
-            method="nearest",
-        )
+        if method == "temporal":
+            df = (
+                krige_tools.preprocess_ds(ds)
+                .sel(time=self.fields.field_1.timestamp)
+                .to_dataframe()
+                .reset_index()
+                .dropna(subset=["mean"])
+            )
+            coords = df[["lat", "lon"]].values
+            field_mean = df["mean"].values
+        else:
+            print(f"Error: method '{method}' not implemented.")
+        return griddata(coords, field_mean, pred_loc, method="nearest",)
 

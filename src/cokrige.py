@@ -38,14 +38,17 @@ class Cokrige:
         ## Prediction
         # TODO: refactor to seperate function to handle mean, trend, transforms, etc.
         mu = self._get_pred_mean(pred_loc, ds=self.fields.ds_1)
-        self.pred = mu + np.matmul(
+        sigma = self._get_pred_std(pred_loc, ds=self.fields.ds_1)
+        self.pred = mu + sigma * np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z)
         )
 
         ## Standard error
-        self.pred_cov = Sigma_11 - np.matmul(
+        # TODO: check whether Sigma_22 is pos def
+        raw_cov = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
+        self.pred_cov = np.matmul(np.diag(sigma), np.matmul(raw_cov, np.diag(sigma)))
         # TODO: handle cases with negative entries appropriately
         self.pred_error = np.sqrt(np.abs(np.diagonal(self.pred_cov)))
         # self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
@@ -129,5 +132,21 @@ class Cokrige:
             field_mean = df["mean"].values
         else:
             print(f"Error: method '{method}' not implemented.")
-        return griddata(coords, field_mean, pred_loc, method="nearest",)
+        return griddata(coords, field_mean, pred_loc, method="nearest")
+
+    def _get_pred_std(self, pred_loc, method="temporal", ds=None):
+        """Fits the surface standard deviation at prediction locations using the supplied mean function."""
+        if method == "temporal":
+            df = (
+                krige_tools.preprocess_ds(ds)
+                .sel(time=self.fields.field_1.timestamp)
+                .to_dataframe()
+                .reset_index()
+                .dropna(subset=["std"])
+            )
+            coords = df[["lat", "lon"]].values
+            field_std = df["std"].values
+        else:
+            print(f"Error: method '{method}' not implemented.")
+        return griddata(coords, field_std, pred_loc, method="nearest")
 

@@ -25,8 +25,8 @@ class Field:
         self.timestamp = timestamp
 
         data_name, var_name = krige_tools.get_field_names(ds)
-        ds = krige_tools.preprocess_ds(
-            ds,
+        ds_prep = krige_tools.preprocess_ds(
+            ds.copy(),
             detrend=detrend,
             center=center,
             standardize=standardize,
@@ -35,7 +35,7 @@ class Field:
         # TODO: add flags for types of transformations applied
         # TODO: is it possible to investigate the assumption of unbiased error?
 
-        df = ds.sel(time=timestamp).to_dataframe().reset_index().dropna()
+        df = ds_prep.sel(time=timestamp).to_dataframe().reset_index().dropna()
         self.coords = df[["lat", "lon"]].values
         self.values = df[data_name].values
         self.variance_estimate = df[var_name].values

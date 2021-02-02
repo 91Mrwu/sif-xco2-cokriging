@@ -45,7 +45,7 @@ def prep_xco2(ds):
     """Preprocess an OCO-2 FP Lite file.
     
     NOTE: 
-    xco2_uncertainty is defined as "the posterior uncertainty in XCO2 calculated by the L2 algorithm, in ppm. This is generally 30-50% smaller than the true retrieval uncertainty." Doubling this value yeilds a conservative estimate of the variance of the measurement error which will be added to the diagonals of the covariance matrix.
+    xco2_uncertainty is defined as "the posterior uncertainty in XCO2 calculated by the L2 algorithm, in ppm. This is generally 30-50% smaller than the true retrieval uncertainty." Doubling this value yields a conservative estimate of the variance of the measurement error which will be added to the diagonals of the covariance matrix.
     """
 
     # drop unused variables

@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.interpolate import griddata
 
 import krige_tools
@@ -21,7 +21,7 @@ class Cokrige:
         self.dist_units = dist_units
         self.fast_dist = fast_dist
 
-    def __call__(self, pred_loc):
+    def __call__(self, pred_loc, full_cov=False):
         """Cokriging predictor and prediction standard error.
 
         NOTE: covariance matrix inversion via Cholesky decomposition
@@ -35,6 +35,13 @@ class Cokrige:
         # data vector
         Z = np.hstack((self.fields.field_1.values, self.fields.field_2.values))
 
+        ## Check model validity
+        try:
+            self._check_pos_def(Sigma_11, Sigma_12, Sigma_22)
+        except LinAlgError:
+            print("The joint covariance matrix is not positive definite.")
+            raise
+
         ## Prediction
         # TODO: refactor to seperate function to handle mean, trend, transforms, etc.
         mu = self._get_pred_mean(pred_loc, ds=self.fields.ds_1)
@@ -43,17 +50,25 @@ class Cokrige:
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z)
         )
 
-        ## Standard error
-        # TODO: check whether Sigma_22 is pos def
-        raw_cov = Sigma_11 - np.matmul(
+        ## Prediction covariance and error
+        raw_cov_mat = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
-        self.pred_cov = np.matmul(np.diag(sigma), np.matmul(raw_cov, np.diag(sigma)))
-        # TODO: handle cases with negative entries appropriately
-        self.pred_error = np.sqrt(np.abs(np.diagonal(self.pred_cov)))
-        # self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
+        self.pred_cov = np.matmul(
+            np.diag(sigma), np.matmul(raw_cov_mat, np.diag(sigma))
+        )
+        self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
 
-        return self.pred, self.pred_error
+        if full_cov:
+            return self.pred, self.pred_cov
+        else:
+            return self.pred, self.pred_error
+
+    def _check_pos_def(self, Sig11, Sig12, Sig22, Sig21=None):
+        """Check that the overarching joint covariance matrix is positive definite using the Cholesky decompostion."""
+        if Sig21 is None:
+            Sig21 = Sig12.T
+        cho_factor(np.block([[Sig11, Sig12], [Sig21, Sig22]]))
 
     def _get_pred_dist(self, pred_loc):
         """Computes distances between prediction point(s)."""

@@ -3,6 +3,11 @@ import numpy as np
 import pandas as pd
 import xarray
 
+"""
+TODO:
+- add check for extremely large observation error and remove those data values in preprocessing
+"""
+
 ## Reading
 def prep_sif(ds):
     """Preprocess an OCO-2 SIF Lite file.

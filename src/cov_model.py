@@ -74,8 +74,10 @@ class BivariateMatern:
         c_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
             dist_blocks["block_11"]
         )
-        c_12 = self.kernel_2.sigma ** 2 * self.kernel_2.correlation(
-            dist_blocks["block_12"]
+        c_12 = (
+            self.kernel_1.sigma
+            * self.kernel_2.sigma
+            * self.kernel_b.correlation(dist_blocks["block_12"])
         )
         return np.hstack((c_11, c_12))
 

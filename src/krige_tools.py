@@ -114,3 +114,15 @@ def land_grid(res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
     )
     return df_mask[["lat", "lon"]].values
 
+
+def pre_post_diag(u, A, v=None):
+    """Returns the matrix product: diag(u) A diag(v).
+
+    params:
+        - v, u: vector(s) passed to np.diag()
+        - A: matrix
+    """
+    if v is None:
+        v = u
+    return np.matmul(np.diag(u), np.matmul(A, np.diag(v)))
+

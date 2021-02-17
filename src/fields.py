@@ -38,6 +38,8 @@ class Field:
         df = ds_prep.sel(time=timestamp).to_dataframe().reset_index().dropna()
         self.coords = df[["lat", "lon"]].values
         self.values = df[data_name].values
+        self.mean = df["mean"].values
+        self.std = df["std"].values
         self.variance_estimate = df[var_name].values
 
     def to_xarray(self):

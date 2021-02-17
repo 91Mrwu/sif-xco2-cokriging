@@ -7,7 +7,10 @@ import krige_tools
 
 
 class Matern:
-    """The Matern covariance model."""
+    """The Matern covariance model.
+    
+    TODO: make this a subclass of gs.CovModel?
+    """
 
     def __init__(self, sigma=1.0, nu=1.5, len_scale=1.0, nugget=0.0):
         self.sigma = sigma  # process standard deviation
@@ -21,8 +24,8 @@ class Matern:
         .. math::
            \rho(r) =
            \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
-           \left(\sqrt{\nu}\cdot\frac{r}{\ell}\right)^{\nu} \cdot
-           \mathrm{K}_{\nu}\left(\sqrt{\nu}\cdot\frac{r}{\ell}\right)
+           \left(\sqrt{2\nu}\cdot\frac{r}{\ell}\right)^{\nu} \cdot
+           \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{r}{\ell}\right)
         """
         # NOTE: modified version of gptools.CovModel.Matern.correlation
         # TODO: add check so that negative distances and correlation values yeild warning.
@@ -33,8 +36,8 @@ class Matern:
         res[h > 0.0] = np.exp(
             (1.0 - self.nu) * np.log(2)
             - sps.gammaln(self.nu)
-            + self.nu * np.log(np.sqrt(2 * self.nu) * h_gz / self.len_scale)
-        ) * sps.kv(self.nu, np.sqrt(2 * self.nu) * h_gz / self.len_scale)
+            + self.nu * np.log(np.sqrt(2.0 * self.nu) * h_gz / self.len_scale)
+        ) * sps.kv(self.nu, np.sqrt(2.0 * self.nu) * h_gz / self.len_scale)
         # if nu >> 1 we get errors for the farfield, there 0 is approached
         res[np.logical_not(np.isfinite(res))] = 0.0
         # covariance is positive
@@ -66,7 +69,10 @@ class BivariateMatern:
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
     def pred_covariance(self, dist_mat):
-        """Computes the variance-covariance matrix for prediction location(s)."""
+        """Computes the variance-covariance matrix for prediction location(s).
+        
+        NOTE: if nugget is not added here, then cov model needs to be updated in notation
+        """
         return self.kernel_1.sigma ** 2 * self.kernel_1.correlation(dist_mat)
 
     def cross_covariance(self, dist_blocks):
@@ -79,12 +85,19 @@ class BivariateMatern:
             * self.kernel_2.sigma
             * self.kernel_b.correlation(dist_blocks["block_12"])
         )
-        return np.hstack((c_11, c_12))
+        cov_vecs = np.hstack((c_11, c_12))
+        joint_std_inverse = np.float_power(
+            np.hstack((self.fields.field_1.std, self.fields.field_2.std)), -1
+        )
+        # normalize rows of cov_vecs with joint_std_inverse via broadcasting
+        assert cov_vecs.shape[1] == joint_std_inverse.shape[0], "mismatched dimensions"
+        return cov_vecs * joint_std_inverse
 
     def covariance_matrix(self, dist_blocks):
-        """Constructs the bivariate Matern covariance matrix."""
-        ## NOTE: issues with pos. def. (maybe above will help, also check off diag params)
-        ## TODO: investigate matrices; are the diagonals just sigma^2?
+        """Constructs the bivariate Matern covariance matrix.
+        
+        NOTE: ask about when to add nugget and error variance along diag
+        """
         C_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
             dist_blocks["block_11"]
         )
@@ -104,19 +117,26 @@ class BivariateMatern:
             dist_blocks["block_22"]
         )
 
-        # add measurement error variance along diagonals
+        # add nugget and measurement error variance along diagonals
         np.fill_diagonal(C_11, C_11.diagonal() + self.kernel_1.nugget + self.sigep_11)
         np.fill_diagonal(C_22, C_22.diagonal() + self.kernel_2.nugget + self.sigep_22)
 
-        # stack blocks into joint covariance matrix
-        return np.block([[C_11, C_12], [C_21, C_22]])
+        # stack blocks into joint covariance matrix and normalize by standard deviation
+        cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
+        joint_std_inverse = np.float_power(
+            np.hstack((self.fields.field_1.std, self.fields.field_2.std)), -1
+        )
+        return krige_tools.pre_post_diag(joint_std_inverse, cov_mat)
 
     def _params_from_variogram(
         self, field, bin_edges, sampling_size=None, sampling_seed=None
     ):
+        """
+        NOTE: This variogram model seems to use Euclidean distance so lengh scale will be wrong. If we want to make a variogram estimate available, we should write it ourselves.
+        """
         # estimate variogram
         bin_center, gamma = gs.vario_estimate_unstructured(
-            (field.coords[:, 0], field.coords[:, 1]),
+            (field.coords[:, 1], field.coords[:, 0]),
             field.values,
             bin_edges,
             sampling_size=sampling_size,
@@ -124,9 +144,14 @@ class BivariateMatern:
             estimator="cressie",
         )
         # fit a Matern variogram model
-        fit_model = gs.Matern(dim=2)  # NOTE: may want to use custom Matern formulation
-        params, _ = fit_model.fit_variogram(bin_center, gamma)
-        return params
+        # NOTE: may want to use custom Matern formulation
+        fit_model = gs.Matern(dim=2, nu=2.5)
+        fit_model.set_arg_bounds(var=[0.1, 10], nu=[0.2, 5], len_scale=[1, 500])
+        params, _ = fit_model.fit_variogram(bin_center, gamma, nu=False, nugget=False)
+        return (
+            params,
+            {"model": fit_model, "bins": bin_center, "sample_variogram": gamma},
+        )
 
     def _empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
         """
@@ -134,13 +159,13 @@ class BivariateMatern:
 
         TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
         """
-        params_1 = self._params_from_variogram(
+        params_1, vario_obj1 = self._params_from_variogram(
             self.fields.field_1,
             bin_edges,
             sampling_size=sampling_size,
             sampling_seed=sampling_seed,
         )
-        params_2 = self._params_from_variogram(
+        params_2, vario_obj2 = self._params_from_variogram(
             self.fields.field_2,
             bin_edges,
             sampling_size=sampling_size,
@@ -167,7 +192,7 @@ class BivariateMatern:
             *krige_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
         )[0]
 
-        return self
+        return self, (vario_obj1, vario_obj2)
 
     def get_params(self):
         """Returns model parameters in a dict.

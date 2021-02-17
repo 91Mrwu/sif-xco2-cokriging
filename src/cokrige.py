@@ -54,9 +54,7 @@ class Cokrige:
         raw_cov_mat = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
-        self.pred_cov = np.matmul(
-            np.diag(sigma), np.matmul(raw_cov_mat, np.diag(sigma))
-        )
+        self.pred_cov = krige_tools.pre_post_diag(sigma, raw_cov_mat)
         self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
 
         if full_cov:

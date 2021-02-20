@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.interpolate import griddata
+from scipy.optimize import minimize, Bounds
 
 import krige_tools
 import fields
@@ -9,10 +10,7 @@ import cov_model
 
 class Cokrige:
     """
-    Details and references
-
-    TODO:
-    - remove field means and/or standardize data
+    Details and references.
     """
 
     def __init__(self, fields, model, dist_units="km", fast_dist=False):
@@ -20,11 +18,13 @@ class Cokrige:
         self.model = model
         self.dist_units = dist_units
         self.fast_dist = fast_dist
+        self.joint_data_vec = np.hstack(
+            (self.fields.field_1.values, self.fields.field_2.values)
+        )
 
     def __call__(self, pred_loc, full_cov=False):
-        """Cokriging predictor and prediction standard error.
-
-        NOTE: covariance matrix inversion via Cholesky decomposition
+        """
+        Cokriging predictor and prediction standard error.
         """
         # prediction variance-covariance matrix
         Sigma_11 = self._get_pred_cov(pred_loc)
@@ -32,8 +32,6 @@ class Cokrige:
         Sigma_12 = self._get_cross_cov(pred_loc)
         # cokriging joint covariance matrix
         Sigma_22 = self._get_joint_cov()
-        # data vector
-        Z = np.hstack((self.fields.field_1.values, self.fields.field_2.values))
 
         ## Check model validity
         try:
@@ -47,14 +45,14 @@ class Cokrige:
         mu = self._get_pred_mean(pred_loc, ds=self.fields.ds_1)
         sigma = self._get_pred_std(pred_loc, ds=self.fields.ds_1)
         self.pred = mu + sigma * np.matmul(
-            Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Z)
+            Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), self.joint_data_vec)
         )
 
         ## Prediction covariance and error
-        raw_cov_mat = Sigma_11 - np.matmul(
+        norm_cov_mat = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
-        self.pred_cov = krige_tools.pre_post_diag(sigma, raw_cov_mat)
+        self.pred_cov = krige_tools.pre_post_diag(sigma, norm_cov_mat)
         self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
 
         if full_cov:
@@ -124,9 +122,11 @@ class Cokrige:
         """Computes the cross-covariance vectors for prediction locations."""
         return self.model.cross_covariance(self._get_cross_dist(pred_loc))
 
-    def _get_joint_cov(self):
+    def _get_joint_cov(self, dist_blocks=None):
         """Computes the cokriging joint covariance matrix."""
-        return self.model.covariance_matrix(self._get_joint_dists())
+        if dist_blocks is None:
+            dist_blocks = self._get_joint_dists()
+        return self.model.covariance_matrix(dist_blocks)
 
     def _get_pred_mean(self, pred_loc, method="temporal", ds=None):
         """Fits the surface mean at prediction locations using the supplied mean function.
@@ -162,4 +162,48 @@ class Cokrige:
         else:
             print(f"Error: method '{method}' not implemented.")
         return griddata(coords, field_std, pred_loc, method="nearest")
+
+    def fit(self, init_guess=None, options=None):
+        """Fit model parameters by maximum likelihood estimation."""
+        dist_blocks = self._get_joint_dists()
+        # TODO: allow for variable smoothness, maybe use exponential transform for all but rho
+        if init_guess is not None:
+            init_guess = np.array(init_guess)
+        else:
+            init_guess = np.repeat(0.5, 8)
+        param_bounds = np.array(list(self.model.param_bounds.values()))
+        bounds = Bounds(param_bounds[:, 0], param_bounds[:, 1])
+        # minimize the negative log-likelihood
+        res = minimize(
+            self._neg_log_likelihood,
+            init_guess,
+            bounds=bounds,
+            args=(dist_blocks),
+            method="L-BFGS-B",
+            options=options,
+        )
+        if res.success is not True:
+            print(f"Warning: {res.message}")
+        # check parameter validity (Gneiting et al. 2010, or just psd check?)
+        self.model.set_params(res.x)
+        cho_factor(self._get_joint_cov(dist_blocks=dist_blocks))
+        # save convergence checks
+        return res
+
+    def _neg_log_likelihood(self, params, dist_blocks):
+        """Computes the (negative) log-likelihood of the supplied parameters."""
+        self.model.set_params(params)
+
+        # construct joint covariance matrix
+        cov_mat = self._get_joint_cov(dist_blocks=dist_blocks)
+
+        # inverse and determinant via Cholesky decomposition
+        cho_l, low = cho_factor(cov_mat, lower=True)
+        log_det = np.sum(np.log(np.diag(cho_l)))
+        quad_form = np.matmul(
+            self.joint_data_vec, cho_solve((cho_l, low), self.joint_data_vec)
+        )
+
+        # negative log-likelihood (up to normalizing constants)
+        return log_det + 0.5 * quad_form
 

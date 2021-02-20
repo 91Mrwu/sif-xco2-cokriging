@@ -22,7 +22,8 @@ dependencies:
   - dask
   - netcdf4
   - h5netcdf
-# Statistics
+# Statistics / ML
+  - pytorch
   - scikit-learn
   - statsmodels
   - geopy

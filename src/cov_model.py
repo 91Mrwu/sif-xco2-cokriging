@@ -68,6 +68,20 @@ class BivariateMatern:
         self.sigep_11 = fields.field_1.variance_estimate.mean()
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
+        self.param_bounds = {
+            "sigma_11": [1e-8, np.inf],
+            # "nu_11": [0.2, 5.0],
+            "len_scale_11": [1e-8, np.inf],
+            "nugget_11": [0, np.inf],
+            # "nu_12": [0.2, 5.0],
+            "len_scale_12": [1e-8, np.inf],
+            "rho": [-1.0, 1.0],
+            "sigma_22": [1e-8, np.inf],
+            # "nu_22": [0.2, 5.0],
+            "len_scale_22": [1e-8, np.inf],
+            "nugget_22": [0, np.inf],
+        }
+
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s).
         
@@ -132,7 +146,7 @@ class BivariateMatern:
         self, field, bin_edges, sampling_size=None, sampling_seed=None
     ):
         """
-        NOTE: This variogram model seems to use Euclidean distance so lengh scale will be wrong. If we want to make a variogram estimate available, we should write it ourselves.
+        NOTE: This variogram model is represented over Euclidean distance so lengh scale will be wrong (though haversine distance availalbe via gs.variogram.estimator.unstructured). If we want to make a variogram estimate available, we should write it ourselves (then we also have more control, e.g. warnings when there are less than 30 obs in a bin).
         """
         # estimate variogram
         bin_center, gamma = gs.vario_estimate_unstructured(
@@ -150,7 +164,7 @@ class BivariateMatern:
         params, _ = fit_model.fit_variogram(bin_center, gamma, nu=False, nugget=False)
         return (
             params,
-            {"model": fit_model, "bins": bin_center, "sample_variogram": gamma},
+            {"model": fit_model, "bins": bin_center, "emp_semivariogram": gamma},
         )
 
     def _empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
@@ -194,17 +208,32 @@ class BivariateMatern:
 
         return self, (vario_obj1, vario_obj2)
 
+    def set_params(self, params_arr):
+        """Set model parameters."""
+        self.kernel_1.sigma = params_arr[0]
+        # self.kernel_1.nu =
+        self.kernel_1.len_scale = params_arr[1]
+        self.kernel_1.nugget = params_arr[2]
+        # self.kernel_b.nu =
+        self.kernel_b.len_scale = params_arr[3]
+        self.rho = params_arr[4]
+        self.kernel_2.sigma = params_arr[5]
+        # self.kernel_2.nu =
+        self.kernel_2.len_scale = params_arr[6]
+        self.kernel_2.nugget = params_arr[7]
+
+    def set_param_bounds(self, bounds):
+        """Set default parameter bounds using dictionary of lists."""
+        self.param_bounds.update(bounds)
+
     def get_params(self):
-        """Returns model parameters in a dict.
-        
-        NOTE: ultimately, each of these should be a vector or matrix of values.
-        """
+        """Return model parameters as a dict."""
         return {
             "sigma_11": self.kernel_1.sigma,
             "nu_11": self.kernel_1.nu,
             "len_scale_11": self.kernel_1.len_scale,
             "nugget_11": self.kernel_1.nugget,
-            "sigep_11": self.sigep_11,
+            # "sigep_11": self.sigep_11,
             "nu_12": self.kernel_b.nu,
             "len_scale_12": self.kernel_b.len_scale,
             "rho": self.rho,
@@ -212,5 +241,5 @@ class BivariateMatern:
             "nu_22": self.kernel_2.nu,
             "len_scale_22": self.kernel_2.len_scale,
             "nugget_22": self.kernel_2.nugget,
-            "sigep_22": self.sigep_22,
+            # "sigep_22": self.sigep_22,
         }

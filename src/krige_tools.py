@@ -6,9 +6,22 @@ import regionmask
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
+from datetime import datetime
+from dateutil import relativedelta
 
 from stat_tools import apply_detrend
 import data_utils
+
+
+def count_months(d1, d2):
+    """Temporal distance in months."""
+    date1 = datetime.strptime(str(d1), "%Y-%m-%d")
+    date2 = datetime.strptime(str(d2), "%Y-%m-%d")
+    r = relativedelta.relativedelta(date2, date1)
+    months = r.months + 12 * r.years
+    if r.days > 0:
+        months += 1
+    return months
 
 
 def get_field_names(ds):
@@ -71,6 +84,22 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
     else:
         # geodesic distances in specified units
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
+
+
+def distance_matrix_time(T1, T2, units="M"):
+    """Computes the relative difference in months among all pairs of points given two sets of dates."""
+    T1 = T1.astype(f"datetime64[{units}]")
+    T2 = T2.astype(f"datetime64[{units}]")
+    return np.abs(np.subtract.outer(T1, T2)).astype(float)
+
+
+def get_dist_pairs(D, dist, tol=0.0):
+    """Returns indices of pairs within a tolerance of the specified distance from distance matrix D."""
+    if tol == 0:
+        pairs = np.argwhere(D == dist)
+    else:
+        pairs = np.argwhere((D >= dist - tol) & (D <= dist + tol))
+    return pairs
 
 
 def match_data_locations(field_1, field_2):

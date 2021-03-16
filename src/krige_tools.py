@@ -3,6 +3,7 @@ import pandas as pd
 import xarray as xr
 import regionmask
 
+from numba import njit
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
@@ -93,6 +94,7 @@ def distance_matrix_time(T1, T2, units="M"):
     return np.abs(np.subtract.outer(T1, T2)).astype(float)
 
 
+@njit
 def get_dist_pairs(D, dist, tol=0.0):
     """Returns indices of pairs within a tolerance of the specified distance from distance matrix D."""
     if tol == 0:

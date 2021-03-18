@@ -1,28 +1,29 @@
+# from datetime import datetime
+# from dateutil import relativedelta
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 import regionmask
 
-from numba import njit
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
-from datetime import datetime
-from dateutil import relativedelta
 
 from stat_tools import apply_detrend
 import data_utils
 
 
 def count_months(d1, d2):
-    """Temporal distance in months."""
-    date1 = datetime.strptime(str(d1), "%Y-%m-%d")
-    date2 = datetime.strptime(str(d2), "%Y-%m-%d")
-    r = relativedelta.relativedelta(date2, date1)
-    months = r.months + 12 * r.years
-    if r.days > 0:
-        months += 1
-    return months
+    # """Temporal distance in months."""
+    # date1 = datetime.strptime(str(d1), "%Y-%m-%d")
+    # date2 = datetime.strptime(str(d2), "%Y-%m-%d")
+    # r = relativedelta.relativedelta(date2, date1)
+    # months = r.months + 12 * r.years
+    # if r.days > 0:
+    #     months += 1
+    # return months
+    pass
 
 
 def get_offset_date_range(year, offset):
@@ -120,173 +121,6 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
     else:
         # geodesic distances in specified units
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
-
-
-def distance_matrix_time(T1, T2, units="M"):
-    """Computes the relative difference in months among all pairs of points given two sets of dates."""
-    T1 = T1.astype(f"datetime64[{units}]")
-    T2 = T2.astype(f"datetime64[{units}]")
-    return np.abs(np.subtract.outer(T1, T2)).astype(float)
-
-
-@njit
-def get_dist_pairs(D, dist, tol=0.0):
-    """Returns indices of pairs within a tolerance of the specified distance from distance matrix D."""
-    if dist == 0 or tol == 0:
-        pairs = np.argwhere(D == dist)
-    else:
-        pairs = np.argwhere((D >= dist - tol) & (D <= dist + tol))
-    return pairs
-
-
-@njit
-def spacetime_cov_calc(data, pairs_time, pairs_space):
-    """
-    Computes the product of elements in x1 and x2 for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
-    
-    Parameters:
-        data: Kx4 array with columns {time_id, location_id, x1, x2}
-        pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
-        pairs_space: Mx2 array with columns {location_id for x1, location_id for x2}
-    Returns:
-        cov: mean of pairwise products
-    """
-    n = pairs_time.shape[0]
-    m = pairs_space.shape[0]
-    pairs_prod = np.empty((n, m))
-
-    for i in range(n):
-        for j in range(m):
-            point_var1 = (data[:, 0] == pairs_time[i, 0]) & (
-                data[:, 1] == pairs_space[j, 0]
-            )
-            point_var2 = (data[:, 0] == pairs_time[i, 1]) & (
-                data[:, 1] == pairs_space[j, 1]
-            )
-            pairs_prod[i, j] = data[point_var1][0, 2] * data[point_var2][0, 3]
-
-    return np.nanmean(pairs_prod)
-
-
-@njit
-def spacetime_vario_calc(data, pairs_time, pairs_space):
-    """
-    Computes the squared difference for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
-    
-    Parameters:
-        data: Kx3 array with columns {time_id, location_id, x1}
-        pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
-        pairs_space: Mx2 array with columns {location_id for x1, location_id for x2}
-    Returns:
-        cov: mean of pairwise squared differences
-    """
-    n = pairs_time.shape[0]
-    m = pairs_space.shape[0]
-    pairs_var = np.empty((n, m))
-
-    for i in range(n):
-        for j in range(m):
-            point1 = (data[:, 0] == pairs_time[i, 0]) & (
-                data[:, 1] == pairs_space[j, 0]
-            )
-            point2 = (data[:, 0] == pairs_time[i, 1]) & (
-                data[:, 1] == pairs_space[j, 1]
-            )
-            pairs_var[i, j] = (data[point1][0, 2] - data[point2][0, 2]) ** 2
-
-    return np.nanmean(pairs_var)
-
-
-def empirical_variogram(
-    df,
-    vars,
-    space_lags,
-    time_lag=0,
-    tol=None,
-    cross=True,
-    covariogram=False,
-    standardize=False,
-):
-    """
-    Empirical spatio-temporal (co)variogram.
-    
-    Params:
-        df: dataframe
-        vars: list of variables for which variogram will be computed
-        space_lags: 1xN array of increasing spatial lags
-        time_lag: integer
-        tol: the width of subsequent distance intervals into which data point pairs are grouped for semivariance estimates, by default the maximum lag is divided into 15 equal windows.
-        cross: indicates whether the cross covariogram will be computed
-        covariogram: indicates whether the covariogram should be computed instead of the variogram
-        standardize: should each data variable be locally standardized?
-        
-    Returns:
-        vario_obj: 
-    """
-    assert len(vars) <= 2
-
-    # Format data
-    df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
-    df["t_id"] = df.groupby(["time"]).ngroup()
-
-    # Standardize locally or remove local mean (i.e., temporal replication)
-    if standardize:
-        df[vars] = df.groupby("loc_id")[vars].transform(
-            lambda x: (x - x.mean()) / x.std()
-        )
-    else:
-        df[vars] = df.groupby("loc_id")[vars].transform(lambda x: x - x.mean())
-
-    data_dict = dict()
-    vario_obj = dict()
-    for i, var in enumerate(vars):
-        data_dict[var] = df[["t_id", "loc_id"] + [vars[i], vars[i]]].values
-        vario_obj[var] = np.zeros_like(space_lags)
-
-    if cross:
-        assert len(vars) > 1
-        data_dict[f"{vars[0]}:{vars[1]}"] = df[["t_id", "loc_id"] + vars].values
-        vario_obj[f"{vars[0]}:{vars[1]}"] = np.zeros_like(space_lags)
-
-    # Establish common spatiotemporal domain (may lead to missing data values)
-    temporal_domain = np.unique(df["time"].values)
-    spatial_domain = np.unique(df[["lat", "lon"]].values, axis=0)
-
-    # Precompute distances
-    dist_time = distance_matrix_time(temporal_domain, temporal_domain)
-    dist_space = distance_matrix(spatial_domain, spatial_domain, fast_dist=True)
-
-    # Get temporal pairs
-    pairs_time = get_dist_pairs(dist_time, time_lag)
-
-    # Iterate over space_lags, get spatial pairs, compute covariances
-    if tol is None:
-        tol = space_lags[-1] / 15
-
-    # TODO: consider reformatting so max space lag is within max dist
-    if covariogram:
-        # TODO: make this piece a sperate function
-        for var in data_dict.keys():
-            for i, lag in enumerate(space_lags):
-                pairs_space = get_dist_pairs(dist_space, lag, tol=tol)
-                assert (
-                    pairs_space.shape[0] > 0
-                ), "Error: Distance too specific to obtain point pairs. Try increasing spatial tolerance."
-                vario_obj[var][i] = spacetime_cov_calc(
-                    data_dict[var], pairs_time, pairs_space
-                )
-    else:
-        for var in data_dict.keys():
-            for i, lag in enumerate(space_lags):
-                pairs_space = get_dist_pairs(dist_space, lag, tol=tol)
-                assert (
-                    pairs_space.shape[0] > 0
-                ), "Error: Distance too specific to obtain point pairs. Try increasing spatial tolerance."
-                vario_obj[var][i] = spacetime_vario_calc(
-                    data_dict[var], pairs_time, pairs_space
-                )
-
-    return vario_obj
 
 
 def match_data_locations(field_1, field_2):

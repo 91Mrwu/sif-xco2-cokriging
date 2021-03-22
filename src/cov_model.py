@@ -16,7 +16,7 @@ class Matern:
         self.sigma = sigma  # process standard deviation
         self.nu = nu  # smoothess parameter
         self.len_scale = len_scale  # length scale parameter
-        self.nugget = nugget  # nugget parameter
+        self.nugget = nugget  # nugget parameter (NOTE: already squared)
 
     def correlation(self, h):
         r"""Matérn correlation function.

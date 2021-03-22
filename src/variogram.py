@@ -1,8 +1,12 @@
+from numba import njit, prange
 import numpy as np
 import pandas as pd
-from numba import njit, prange
+import scipy.special as sps
+from scipy.optimize import curve_fit
 
 from krige_tools import distance_matrix
+
+# TODO: establish a variogram class
 
 
 def distance_matrix_time(T1, T2, units="M"):
@@ -170,3 +174,51 @@ def empirical_variogram(
         )
 
     return df_vario
+
+
+# TODO: add ability to `freeze` parameters
+def matern_correlation(xdata, len_scale):
+    nu = 2.5
+    xdata_ = (xdata / len_scale)[xdata > 0.0]
+    corr = np.ones_like(xdata)
+    corr[xdata > 0.0] = np.exp(
+        (1.0 - nu) * np.log(2)
+        - sps.gammaln(nu)
+        + nu * np.log(np.sqrt(2.0 * nu) * xdata_)
+    ) * sps.kv(nu, np.sqrt(2.0 * nu) * xdata_)
+    return corr
+
+
+def matern_vario(xdata, sigma, len_scale, nugget):
+    return sigma ** 2 * (1 - matern_correlation(xdata, len_scale)) + nugget
+
+
+def matern_covario(xdata, sigma, len_scale, nugget):
+    ydata = sigma ** 2 * matern_correlation(xdata, len_scale)
+    ydata[0] += nugget
+    return ydata
+
+
+def matern_cross_cov(xdata, sigma1, sigma2, len_scale, rho):
+    return rho * sigma1 * sigma2 * matern_correlation(xdata, len_scale)
+
+
+def fit_variogram(xdata, ydata, initial_guess, cross=False):
+    """Fit covariance parameters to empirical variogram by non-linear least squares."""
+    kwargs = {"loss": "soft_l1", "verbose": 1}
+    if cross:
+        # Fit using covariogram
+        bounds = ([0.01, 0.01, 0.1, -1.0], [10, 10, 1e4, 1])  # (lwr, upr)
+        params, _ = curve_fit(
+            matern_cross_cov, xdata, ydata, p0=initial_guess, bounds=bounds, **kwargs
+        )
+        fit = matern_cross_cov(xdata, *params)
+    else:
+        # Fit using variogram
+        bounds = ([0.01, 0.1, 0.0], [10, 1e4, 10])  # (lwr, upr)
+        params, _ = curve_fit(
+            matern_vario, xdata, ydata, p0=initial_guess, bounds=bounds, **kwargs
+        )
+        fit = matern_vario(xdata, *params)
+    return params, fit
+

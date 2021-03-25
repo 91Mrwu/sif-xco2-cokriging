@@ -1,3 +1,6 @@
+import warnings
+
+from numba import njit, prange
 import numpy as np
 import gstools as gs
 import scipy.special as sps

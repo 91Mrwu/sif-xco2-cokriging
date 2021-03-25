@@ -1,5 +1,5 @@
-# from datetime import datetime
-# from dateutil import relativedelta
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 import numpy as np
 import pandas as pd
@@ -26,12 +26,20 @@ def count_months(d1, d2):
     pass
 
 
-def get_offset_date_range(year, offset):
-    # start_date = datetime.fromisoformat(f"{year}-01-01")
-    # time_mask_xco2 = (df["time"] >= start_date) & (df["time"] < start_date + relativedelta(years=1))
-    # time_mask_sif = (df["time"] >= start_date - relativedelta(months=sif_month_lag)) & (df["time"] < start_date + relativedelta(months=12-sif_month_lag))
-    # df[time_mask_xco2]
-    pass
+def get_date_range_offset(df, vars, year, offset):
+    """Select a year of data for both variables, with the second variable lagged by the offset."""
+    df["time"] = pd.to_datetime(df["time"])
+    start_date = datetime.fromisoformat(f"{year}-01-01")
+    mask = (df["time"] >= start_date) & (
+        df["time"] < start_date + relativedelta(years=1)
+    )
+    mask_offset = (df["time"] >= start_date - relativedelta(months=offset)) & (
+        df["time"] < start_date + relativedelta(months=12 - offset)
+    )
+    df_var1 = df[mask].drop(vars[1], axis=1)
+    df_var2 = df[mask_offset].drop(vars[0], axis=1)
+    df_offset = pd.merge(df_var1, df_var2, how="outer", on=["lat", "lon", "time"])
+    return df_offset
 
 
 def standardize_yearly_groups():

@@ -113,8 +113,7 @@ def apply_vario_calc(space_lags, dist_space, tol, data, pairs_time, covariogram)
 
 
 def empirical_variogram(
-    df,
-    vars,
+    mf,
     space_lags,
     tol=None,
     crop_lags=True,
@@ -127,7 +126,7 @@ def empirical_variogram(
     Empirical spatio-temporal (co)variogram.
 
     Parameters:
-        df: dataframe with columns {"lat", "lon", "time", variable1, variable2}
+        mf: multi-field object
         vars: list of variables for which variogram will be computed
         space_lags: 1xN array of increasing spatial lags
         tol: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates, by default the maximum lag is divided by 15; note that this can be seen as a rolling window and depending on the size, some pairs may be repeated in multiple bins
@@ -140,13 +139,17 @@ def empirical_variogram(
     Returns:
         df_vario: dataframe containing the spatial lags and corresponding (co)variogram values 
     """
-    assert len(vars) <= 2
+    # Format data
+    df_1 = mf.field_1.get_spacetime_df()
+    df_2 = mf.field_2.get_spacetime_df()
+    df = pd.merge(df_1, df_2, how="outer", on=["lat", "lon", "time"])
 
     # Assign location and time IDs
     df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
     df["t_id"] = df.groupby(["time"]).ngroup()
 
     # Standardize locally or remove local mean (i.e., temporal replication)
+    vars = [mf.field_1.data_name, mf.field_2.data_name]
     if standardize:
         df[vars] = df.groupby("loc_id")[vars].transform(
             lambda x: (x - x.mean()) / x.std()
@@ -154,13 +157,17 @@ def empirical_variogram(
     else:
         df[vars] = df.groupby("loc_id")[vars].transform(lambda x: x - x.mean())
 
-    # Establish common spatiotemporal domain (may lead to missing data values)
-    temporal_domain = np.unique(df["time"].values)
-    spatial_domain = np.unique(df[["lat", "lon"]].values, axis=0)
+    # Establish space-time domains (may lead to missing data values)
+    times_1 = np.unique(df_1["time"].values)
+    times_2 = np.unique(df_2["time"].values)
+    space_1 = np.unique(df_1[["lat", "lon"]].values, axis=0)
+    space_2 = np.unique(df_2[["lat", "lon"]].values, axis=0)
+
+    # TODO: finish code from here and rerun variogram fits
 
     # Precompute distances
-    dist_time = distance_matrix_time(temporal_domain, temporal_domain)
-    dist_space = distance_matrix(spatial_domain, spatial_domain, fast_dist=True)
+    dist_time = distance_matrix_time(times_1, times_2)
+    dist_space = distance_matrix(space_1, space_2, fast_dist=True)
     assert time_lag <= dist_time.max()
 
     if crop_lags:

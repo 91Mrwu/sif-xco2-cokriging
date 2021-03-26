@@ -14,16 +14,14 @@ from stat_tools import apply_detrend
 import data_utils
 
 
-def count_months(d1, d2):
-    # """Temporal distance in months."""
-    # date1 = datetime.strptime(str(d1), "%Y-%m-%d")
-    # date2 = datetime.strptime(str(d2), "%Y-%m-%d")
-    # r = relativedelta.relativedelta(date2, date1)
-    # months = r.months + 12 * r.years
-    # if r.days > 0:
-    #     months += 1
-    # return months
-    pass
+def get_year_window(timestamp):
+    """Given the month to center on, return the first and last month in the window as a list."""
+    center_time = datetime.strptime(timestamp, "%Y-%m-%d")
+    window = [
+        center_time - relativedelta(months=5),
+        center_time + relativedelta(months=6),
+    ]
+    return tuple([w.strftime("%Y-%m-%d") for w in window])
 
 
 def get_date_range_offset(df, vars, year, offset):
@@ -42,11 +40,6 @@ def get_date_range_offset(df, vars, year, offset):
     return df_offset
 
 
-def standardize_yearly_groups():
-    # df.groupby("year").transform(lambda x: (x - x.mean()) / x.std())
-    pass
-
-
 def get_field_names(ds):
     """Returns data and estimated variance names from dataset."""
     var_name = [name for name in list(ds.keys()) if "_var" in name][0]
@@ -54,29 +47,27 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def preprocess_ds(ds, detrend=False, center=False, standardize=False, scale_fact=None):
+def preprocess_ds(ds, timestamp, full_detrend=False, standardize_window=False):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = get_field_names(ds)
 
     # TODO: get actual trend so it can be added back to field in prediction
-    if detrend:
+    if full_detrend:
         ds[data_name], _ = apply_detrend(ds[data_name])
 
-    ds["mean"] = ds[data_name].mean(dim="time")
-    ds["std"] = ds[data_name].std(dim="time")
+    # Subset dataset to year centered on timestamp
+    window = get_year_window(timestamp)
+    ds_window = ds.sel(time=slice(*window))
 
-    # TODO: throw warning if both center and standardize are True
-    if center:
-        ds[data_name] = ds[data_name] - ds["mean"]
+    ds_window["mean"] = ds_window[data_name].mean(dim="time")
+    ds_window["std"] = ds_window[data_name].std(dim="time")
 
-    if standardize:
-        ds[data_name] = (ds[data_name] - ds["mean"]) / ds["std"]
+    if standardize_window:
+        ds_window[data_name] = (ds_window[data_name] - ds_window["mean"]) / ds_window[
+            "std"
+        ]
 
-    if scale_fact is not None:
-        ds[data_name] = scale_fact * ds[data_name]
-        ds[var_name] = scale_fact * ds[var_name]
-
-    return ds
+    return ds_window
 
 
 def land_grid(res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):

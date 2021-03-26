@@ -7,6 +7,7 @@ import scipy.special as sps
 from scipy.stats import pearsonr
 
 import krige_tools
+import variogram as vgm
 
 
 class Matern:
@@ -145,7 +146,7 @@ class BivariateMatern:
         )
         return krige_tools.pre_post_diag(joint_std_inverse, cov_mat)
 
-    def _params_from_variogram(
+    def _params_from_gstools(
         self, field, bin_edges, sampling_size=None, sampling_seed=None
     ):
         """
@@ -170,7 +171,11 @@ class BivariateMatern:
             {"model": fit_model, "bins": bin_center, "emp_semivariogram": gamma},
         )
 
-    def _empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
+    def _params_from_variogram(self, mf, bin_centers):
+        """Fit covariance and cross-covariance parameters to empirical semivariograms and cross-covariogram, respectively."""
+        pass
+
+    def empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
         """
         Collects parameters needed for construction of process kernels and cross-kernels.
 

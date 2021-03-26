@@ -13,34 +13,33 @@ class Field:
     """
 
     def __init__(
-        self,
-        ds,
-        timestamp,
-        detrend=False,
-        center=False,
-        standardize=False,
-        scale_fact=None,
+        self, ds, timestamp, full_detrend=False, standardize_window=False,
     ):
         # self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
         self.timestamp = timestamp
 
-        data_name, var_name = krige_tools.get_field_names(ds)
+        self.data_name, self.var_name = krige_tools.get_field_names(ds)
         ds_prep = krige_tools.preprocess_ds(
             ds.copy(),
-            detrend=detrend,
-            center=center,
-            standardize=standardize,
-            scale_fact=scale_fact,
+            timestamp,
+            full_detrend=full_detrend,
+            standardize_window=standardize_window,
         )
         # TODO: add flags for types of transformations applied
         # TODO: is it possible to investigate the assumption of unbiased error?
 
-        df = ds_prep.sel(time=timestamp).to_dataframe().reset_index().dropna()
+        df = (
+            ds_prep.sel(time=timestamp)
+            .to_dataframe()
+            .reset_index()
+            .dropna(subset=[self.data_name])
+        )
+        self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values
-        self.values = df[data_name].values
+        self.values = df[self.data_name].values
         self.mean = df["mean"].values
         self.std = df["std"].values
-        self.variance_estimate = df[var_name].values
+        self.variance_estimate = df[self.var_name].values
 
     def to_xarray(self):
         """Converts the field to an xarray dataset."""
@@ -56,6 +55,15 @@ class Field:
             .to_xarray()
         )
 
+    def get_spacetime_df(self):
+        """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
+        return (
+            self.ds.to_dataframe()
+            .drop(columns=[self.var_name, "mean", "std"])
+            .dropna()
+            .reset_index()
+        )
+
 
 class MultiField:
     """
@@ -68,10 +76,8 @@ class MultiField:
         ds_2,
         timestamp,
         timedelta=0,
-        detrend=False,
-        center=False,
-        standardize=False,
-        scale_fact=(None, None),
+        full_detrend=False,
+        standardize_window=False,
     ):
         self.timestamp = timestamp
         self.timedelta = timedelta
@@ -80,18 +86,14 @@ class MultiField:
         self.field_1 = Field(
             ds_1,
             timestamp,
-            detrend=detrend,
-            center=center,
-            standardize=standardize,
-            scale_fact=scale_fact[0],
+            full_detrend=full_detrend,
+            standardize_window=standardize_window,
         )
         self.field_2 = Field(
             ds_2,
             self._apply_timedelta(),
-            detrend=detrend,
-            center=center,
-            standardize=standardize,
-            scale_fact=scale_fact[1],
+            full_detrend=full_detrend,
+            standardize_window=standardize_window,
         )
 
     def _apply_timedelta(self):

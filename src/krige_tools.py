@@ -14,12 +14,15 @@ from stat_tools import apply_detrend
 import data_utils
 
 
-def get_year_window(timestamp):
-    """Given the month to center on, return the first and last month in the window as a list."""
+def get_year_window(timestamp, timedelta=0.0):
+    """Given the month to center on, return the first and last month in the window as a list.
+    
+    If timedelta is supplied, it will extend the window forward to yeild an equal number of foward and backward distance pairs.
+    """
     center_time = datetime.strptime(timestamp, "%Y-%m-%d")
     window = [
         center_time - relativedelta(months=5),
-        center_time + relativedelta(months=6),
+        center_time + relativedelta(months=6 + 2 * np.abs(timedelta)),
     ]
     return tuple([w.strftime("%Y-%m-%d") for w in window])
 
@@ -47,7 +50,9 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def preprocess_ds(ds, timestamp, full_detrend=False, standardize_window=False):
+def preprocess_ds(
+    ds, timestamp, timedelta=0.0, full_detrend=False, standardize_window=False
+):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = get_field_names(ds)
 
@@ -56,7 +61,7 @@ def preprocess_ds(ds, timestamp, full_detrend=False, standardize_window=False):
         ds[data_name], _ = apply_detrend(ds[data_name])
 
     # Subset dataset to year centered on timestamp
-    window = get_year_window(timestamp)
+    window = get_year_window(timestamp, timedelta=timedelta)
     ds_window = ds.sel(time=slice(*window))
 
     ds_window["mean"] = ds_window[data_name].mean(dim="time")

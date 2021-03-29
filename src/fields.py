@@ -13,15 +13,21 @@ class Field:
     """
 
     def __init__(
-        self, ds, timestamp, full_detrend=False, standardize_window=False,
+        self,
+        ds,
+        timestamp,
+        timedelta=0.0,
+        full_detrend=False,
+        standardize_window=False,
     ):
-        # self.timestamp = datetime.strptime(timestamp, "%Y-%m-%d")
         self.timestamp = timestamp
+        self.timedelta = timedelta
 
         self.data_name, self.var_name = krige_tools.get_field_names(ds)
         ds_prep = krige_tools.preprocess_ds(
             ds.copy(),
             timestamp,
+            timedelta=timedelta,
             full_detrend=full_detrend,
             standardize_window=standardize_window,
         )
@@ -57,12 +63,16 @@ class Field:
 
     def get_spacetime_df(self):
         """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
-        return (
+        df = (
             self.ds.to_dataframe()
             .drop(columns=[self.var_name, "mean", "std"])
             .dropna()
             .reset_index()
         )
+        # Assign location and time IDs
+        df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
+        df["t_id"] = df.groupby(["time"]).ngroup()
+        return df
 
 
 class MultiField:
@@ -92,6 +102,7 @@ class MultiField:
         self.field_2 = Field(
             ds_2,
             self._apply_timedelta(),
+            timedelta=timedelta,
             full_detrend=full_detrend,
             standardize_window=standardize_window,
         )

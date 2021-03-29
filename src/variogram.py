@@ -9,6 +9,21 @@ from scipy.optimize import curve_fit, minimize
 from krige_tools import distance_matrix
 
 # TODO: establish a variogram class
+"""
+TODO: 
+- need to break temporal pairs apart directionally, then compute the cross-covariogram for both sets of pairs
+    - want a constant 12 pairs so adjust SIF window accordingly (done)
+- this may fix the issue where point masks yeild empty arrays which can't be indexed
+- if it doesn't, just ignore non-finite values for now? how do we do this if we can't get the index?
+"""
+
+
+def crop_lag_vec(lags, dist):
+    """Crop lag vector from minimum distance to half the maximum distance and pad with a leading zero."""
+    min_dist = dist[dist > 0.0].min()
+    max_dist = 0.5 * dist.max()
+    lags = lags[(lags >= min_dist) & (lags <= max_dist)]
+    return np.hstack([[0.0], lags])
 
 
 def distance_matrix_time(T1, T2, units="M"):
@@ -29,47 +44,14 @@ def get_dist_pairs(D, dist, tol=0.0):
 
 
 @njit
-def spacetime_cov_calc(data, pairs_time, pairs_space):
-    """
-    Computes the product of elements in x1 and x2 for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
-    
-    Parameters:
-        data: Kx4 array with columns {time_id, location_id, x1, x2}
-        pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
-        pairs_space: Mx2 array with columns {location_id for x1, location_id for x2}
-    Returns:
-        cov: mean of pairwise products
-        count: number on non-missing pairs included in calculation
-    """
-    n = pairs_time.shape[0]
-    m = pairs_space.shape[0]
-    pairs_prod = np.nan * np.zeros((n, m))
-
-    if n == 0 or m == 0:
-        return np.nan, 0.0
-
-    for i in range(n):
-        for j in range(m):
-            point_var1 = (data[:, 0] == pairs_time[i, 0]) & (
-                data[:, 1] == pairs_space[j, 0]
-            )
-            point_var2 = (data[:, 0] == pairs_time[i, 1]) & (
-                data[:, 1] == pairs_space[j, 1]
-            )
-            pairs_prod[i, j] = data[point_var1][0, 2] * data[point_var2][0, 3]
-
-    return np.nanmean(pairs_prod), np.count_nonzero(~np.isnan(pairs_prod))
-
-
-@njit
 def spacetime_vario_calc(data, pairs_time, pairs_space):
     """
     Computes the squared difference for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
     
     Parameters:
-        data: Kx4 array with columns {time_id, location_id, x1, x2}
-        pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
-        pairs_space: Mx2 array with columns {location_id for x1, location_id for x2} 
+        data: Kx3 array with columns {time_id, location_id, values}
+        pairs_time: Nx2 array with columns {time_id, time_id}
+        pairs_space: Mx2 array with columns {location_id, location_id} 
     Returns:
         vario: mean of pairwise squared differences
         count: number on non-missing pairs included in calculation
@@ -81,21 +63,55 @@ def spacetime_vario_calc(data, pairs_time, pairs_space):
     if n == 0 or m == 0:
         return np.nan, 0.0
 
-    for i in range(n):
-        for j in range(m):
+    for i in range(n):  # temporal ids
+        for j in range(m):  # spatial ids
             point1 = (data[:, 0] == pairs_time[i, 0]) & (
                 data[:, 1] == pairs_space[j, 0]
             )
             point2 = (data[:, 0] == pairs_time[i, 1]) & (
                 data[:, 1] == pairs_space[j, 1]
             )
-            pairs_var[i, j] = (data[point1][0, 2] - data[point2][0, 3]) ** 2
+            pairs_var[i, j] = (data[point1][0, 2] - data[point2][0, 2]) ** 2
 
     return np.nanmean(pairs_var), np.count_nonzero(~np.isnan(pairs_var))
 
 
+# @njit
+def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
+    """
+    Computes the product of elements in x1 and x2 for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
+    
+    Parameters:
+        d1, d2: Kx3 arrays with columns {time_id, location_id, values}
+        pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
+        pairs_space: Mx2 array with columns {location_id for x1, location_id for x2}
+    Returns:
+        cov: mean of pairwise products
+        count: number on non-missing pairs included in calculation
+    """
+    n = pairs_time.shape[0]
+    m = pairs_space.shape[0]
+    pairs_prod = np.nan * np.zeros((n, m))
+    if n == 0 or m == 0:
+        return np.nan, 0.0
+
+    # NOTE: Since we use data specific distance matrices, there shouldn't be any points where the index comes up empty, but for some reason there are a few for space_lag=0. Ignore these for now.
+    for i in range(n):  # temporal ids
+        for j in range(m):  # spatial ids
+            point_var1 = (d1[:, 0] == pairs_time[i, 0]) & (
+                d1[:, 1] == pairs_space[j, 0]
+            )
+            point_var2 = (d2[:, 0] == pairs_time[i, 1]) & (
+                d2[:, 1] == pairs_space[j, 1]
+            )
+            pairs_prod[i, j] = d1[point_var1][0, 2] * d2[point_var2][0, 2]
+
+    pairs_prod = np.where(np.isfinite(pairs_prod), pairs_prod, np.nan)
+    return np.nanmean(pairs_prod), np.count_nonzero(~np.isnan(pairs_prod))
+
+
 @njit(parallel=True)
-def apply_vario_calc(space_lags, dist_space, tol, data, pairs_time, covariogram):
+def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data):
     """For a fixed temporal lag, compute vario calc at all spatial lags in parallel."""
     v = np.zeros_like(space_lags)
     counts = np.zeros_like(space_lags)
@@ -104,105 +120,145 @@ def apply_vario_calc(space_lags, dist_space, tol, data, pairs_time, covariogram)
         pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        if covariogram:
-            v[h], counts[h] = spacetime_cov_calc(data, pairs_time, pairs_space)
-        else:
-            v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
+        v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
 
     return v, counts
 
 
-def empirical_variogram(
-    mf,
-    space_lags,
-    tol=None,
-    crop_lags=True,
-    time_lag=0,
-    cross=True,
-    covariogram=False,
-    standardize=False,
+# @njit(parallel=True)
+def apply_xcov_calc(space_lags, dist_space, tol, pairs_time, data1, data2):
+    """For a fixed temporal lag, compute cross covariance at all spatial lags in parallel."""
+    v = np.zeros_like(space_lags)
+    counts = np.zeros_like(space_lags)
+
+    for h in prange(len(v)):  # pylint: disable=not-an-iterable
+        pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
+        if pairs_space.shape[0] == 0:
+            print("Degenerate.")
+        v[h], counts[h] = spacetime_cov_calc(data1, data2, pairs_time, pairs_space)
+
+    return v, counts
+
+
+def empirical_variogram(df, name, space_lags, tol, time_lag, crop_lags=False):
+    """Basic function to compute a variogram from a dataframe."""
+    # Establish space-time domain
+    times = np.unique(df["time"].values)
+    coords = np.unique(df[["lat", "lon"]].values, axis=0)
+
+    # Precompute distances
+    dist_time = distance_matrix_time(times, times)
+    dist_space = distance_matrix(coords, coords, fast_dist=True)
+    if crop_lags:
+        space_lags = crop_lag_vec(space_lags, dist_space)
+
+    assert space_lags[-1] <= dist_space.max()
+    assert time_lag <= dist_time.max()
+
+    # Get temporal pairs
+    pairs_time = get_dist_pairs(dist_time, time_lag)
+
+    # Format data and variogram dataframe
+    data = df[["t_id", "loc_id"] + [name]].values
+    df_vgm = pd.DataFrame({"lag": space_lags})
+
+    # Compute variogram
+    df_vgm[name], df_vgm["counts"] = apply_vario_calc(
+        space_lags, dist_space, tol, pairs_time, data
+    )
+    if (df_vgm["counts"] < 30).any():
+        warnings.warn(
+            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+        )
+
+    return df_vgm
+
+
+def empirical_cross_cov(data_dict, space_lags, tol, time_lag, crop_lags=False):
+    """Basic function to compute a cross covariogram from a pair of dataframes stored in dict."""
+    names = list(data_dict.keys())
+    # Establish space-time domains
+    times = [np.unique(data_dict[var]["time"].values) for var in names]
+    coords = [np.unique(data_dict[var][["lat", "lon"]].values, axis=0) for var in names]
+
+    # Precompute distances
+    dist_time = distance_matrix_time(times[0], times[1])
+    dist_space = distance_matrix(coords[0], coords[1], fast_dist=True)
+    if crop_lags:
+        space_lags = crop_lag_vec(space_lags, dist_space)
+
+    assert space_lags[-1] <= dist_space.max()
+    assert time_lag <= dist_time.max()
+
+    # Get temporal pairs
+    pairs_time = get_dist_pairs(dist_time, time_lag)
+
+    # Format data and variogram dataframe
+    data = [data_dict[var][["t_id", "loc_id"] + [var]].values for var in names]
+    df_vgm = pd.DataFrame({"lag": space_lags})
+
+    # Compute cross-covariogram
+    df_vgm[f"{names[0]}:{names[1]}"], df_vgm["counts"] = apply_xcov_calc(
+        space_lags, dist_space, tol, pairs_time, data[0], data[1]
+    )
+    if (df_vgm["counts"] < 30).any():
+        warnings.warn(
+            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+        )
+
+    return df_vgm
+
+
+def variogram_analysis(
+    mf, space_lags, tol, time_lag=0, crop_lags=False, standardize=False,
 ):
     """
     Empirical spatio-temporal (co)variogram.
 
     Parameters:
         mf: multi-field object
-        vars: list of variables for which variogram will be computed
         space_lags: 1xN array of increasing spatial lags
-        tol: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates, by default the maximum lag is divided by 15; note that this can be seen as a rolling window and depending on the size, some pairs may be repeated in multiple bins
-        crop_lags: should spatial lag vector be trimmed to half the maximum distance, and formatted such that the first non-zero element is the minimum distance?
+        tol: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates; note that this can be seen as a rolling window so depending on the size, some pairs may be repeated in multiple bins
         time_lag: integer
-        cross: indicates whether the cross (co)variogram will be computed
-        covariogram: indicates whether the covariogram should be computed instead of the variogram
+        crop_lags: should spatial lag vector be trimmed to half the maximum distance, and formatted such that the first non-zero element is the minimum distance?
         standardize: should each data variable be locally standardized?
 
     Returns:
-        df_vario: dataframe containing the spatial lags and corresponding (co)variogram values 
+        variograms: dictionary containing variogram and cross-covariogram dataframes 
     """
     # Format data
-    df_1 = mf.field_1.get_spacetime_df()
-    df_2 = mf.field_2.get_spacetime_df()
-    df = pd.merge(df_1, df_2, how="outer", on=["lat", "lon", "time"])
-
-    # Assign location and time IDs
-    df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
-    df["t_id"] = df.groupby(["time"]).ngroup()
+    data_dict = {
+        mf.field_1.data_name: mf.field_1.get_spacetime_df(),
+        mf.field_2.data_name: mf.field_2.get_spacetime_df(),
+    }
+    names = list(data_dict.keys())
+    time_lag = np.abs(time_lag)
 
     # Standardize locally or remove local mean (i.e., temporal replication)
-    vars = [mf.field_1.data_name, mf.field_2.data_name]
-    if standardize:
-        df[vars] = df.groupby("loc_id")[vars].transform(
-            lambda x: (x - x.mean()) / x.std()
-        )
-    else:
-        df[vars] = df.groupby("loc_id")[vars].transform(lambda x: x - x.mean())
-
-    # Establish space-time domains (may lead to missing data values)
-    times_1 = np.unique(df_1["time"].values)
-    times_2 = np.unique(df_2["time"].values)
-    space_1 = np.unique(df_1[["lat", "lon"]].values, axis=0)
-    space_2 = np.unique(df_2[["lat", "lon"]].values, axis=0)
-
-    # TODO: finish code from here and rerun variogram fits
-
-    # Precompute distances
-    dist_time = distance_matrix_time(times_1, times_2)
-    dist_space = distance_matrix(space_1, space_2, fast_dist=True)
-    assert time_lag <= dist_time.max()
-
-    if crop_lags:
-        min_dist = dist_space[dist_space > 0.0].min()
-        max_dist = 0.5 * dist_space.max()
-        space_lags = space_lags[(space_lags >= min_dist) & (space_lags <= max_dist)]
-        space_lags = np.hstack([[0.0], space_lags])
-
-    assert space_lags[-1] <= dist_space.max()
-    if tol is None:
-        tol = space_lags[-1] / 15
-
-    # Format data and variogram objects
-    df_vario = pd.DataFrame({"lag": space_lags})
-    data_dict = dict()
-    for i, var in enumerate(vars):
-        data_dict[var] = df[["t_id", "loc_id"] + [vars[i], vars[i]]].values
-    if cross:
-        assert len(vars) > 1
-        data_dict[f"{vars[0]}:{vars[1]}"] = df[["t_id", "loc_id"] + vars].values
-
-    # Get temporal pairs
-    pairs_time = get_dist_pairs(dist_time, time_lag)
-
-    # Compute variograms
-    for var in data_dict.keys():
-        df_vario[var], df_vario[f"{var}_counts"] = apply_vario_calc(
-            space_lags, dist_space, tol, data_dict[var], pairs_time, covariogram
-        )
-        if (df_vario[f"{var}_counts"] < 30).any():
-            warnings.warn(
-                f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation for {var}"
+    for var in names:
+        if standardize:
+            data_dict[var][var] = (
+                data_dict[var]
+                .groupby("loc_id")[var]
+                .transform(lambda x: (x - x.mean()) / x.std())
+            )
+        else:
+            data_dict[var][var] = (
+                data_dict[var].groupby("loc_id")[var].transform(lambda x: x - x.mean())
             )
 
-    return df_vario
+    # Compute variograms and cross-covariogram
+    variograms = dict()
+    variograms[f"{names[0]}:{names[1]}"] = empirical_cross_cov(
+        data_dict, space_lags, tol, time_lag, crop_lags=crop_lags
+    )
+    for var in names:
+        # NOTE: no temporal lag
+        variograms[var] = empirical_variogram(
+            data_dict[var], var, space_lags, tol, 0, crop_lags=crop_lags
+        )
+
+    return variograms
 
 
 # TODO: add ability to `freeze` parameters

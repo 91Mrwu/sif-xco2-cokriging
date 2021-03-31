@@ -225,7 +225,7 @@ def empirical_cross_cov(data_dict, space_lags, tol, time_lag, crop_lags=0.65):
 
 # TODO: add ability to `freeze` parameters
 def matern_correlation(xdata, len_scale):
-    nu = 2.5
+    nu = 1.5
     xdata_ = (xdata / len_scale)[xdata > 0.0]
     corr = np.ones_like(xdata)
     corr[xdata > 0.0] = np.exp(

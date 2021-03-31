@@ -2,9 +2,11 @@ import warnings
 
 from numba import njit, prange
 import numpy as np
-import gstools as gs
+
+# import gstools as gs
 import scipy.special as sps
-from scipy.stats import pearsonr
+from scipy.linalg import cho_factor, cho_solve, LinAlgError
+from scipy.optimize import minimize
 
 import krige_tools
 import variogram as vgm
@@ -73,17 +75,17 @@ class BivariateMatern:
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
         self.param_bounds = {
-            "sigma_11": [1e-8, np.inf],
+            "sigma_11": (1e-3, 10.0),
             # "nu_11": [0.2, 5.0],
-            "len_scale_11": [1e-8, np.inf],
-            "nugget_11": [0, np.inf],
+            "len_scale_11": (1.0, 1e4),
+            "nugget_11": (0.5, 10.0),
             # "nu_12": [0.2, 5.0],
-            "len_scale_12": [1e-8, np.inf],
-            "rho": [-1.0, 1.0],
-            "sigma_22": [1e-8, np.inf],
+            "len_scale_12": (1.0, 1e4),
+            "rho": (-1.0, 1.0),
+            "sigma_22": (1e-3, 10.0),
             # "nu_22": [0.2, 5.0],
-            "len_scale_22": [1e-8, np.inf],
-            "nugget_22": [0, np.inf],
+            "len_scale_22": (1.0, 1e4),
+            "nugget_22": (0.5, 10.0),
         }
 
     def pred_covariance(self, dist_mat):
@@ -104,12 +106,11 @@ class BivariateMatern:
             * self.kernel_b.correlation(dist_blocks["block_12"])
         )
         cov_vecs = np.hstack((c_11, c_12))
-        joint_std_inverse = np.float_power(
-            np.hstack((self.fields.field_1.std, self.fields.field_2.std)), -1
-        )
         # normalize rows of cov_vecs with joint_std_inverse via broadcasting
-        assert cov_vecs.shape[1] == joint_std_inverse.shape[0], "mismatched dimensions"
-        return cov_vecs * joint_std_inverse
+        assert (
+            cov_vecs.shape[1] == self.fields.joint_std_inverse.shape[0]
+        ), "mismatched dimensions"
+        return cov_vecs * self.fields.joint_std_inverse
 
     def covariance_matrix(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix.
@@ -141,80 +142,104 @@ class BivariateMatern:
 
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
-        joint_std_inverse = np.float_power(
-            np.hstack((self.fields.field_1.std, self.fields.field_2.std)), -1
-        )
-        return krige_tools.pre_post_diag(joint_std_inverse, cov_mat)
+        return krige_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
 
-    def _params_from_gstools(
-        self, field, bin_edges, sampling_size=None, sampling_seed=None
+    # def _params_from_gstools(
+    #     self, field, bin_edges, sampling_size=None, sampling_seed=None
+    # ):
+    #     """
+    #     NOTE: This variogram model is represented over Euclidean distance so lengh scale will be wrong (though haversine distance availalbe via gs.variogram.estimator.unstructured). If we want to make a variogram estimate available, we should write it ourselves (then we also have more control, e.g. warnings when there are less than 30 obs in a bin).
+    #     """
+    #     # estimate variogram
+    #     bin_center, gamma = gs.vario_estimate_unstructured(
+    #         (field.coords[:, 1], field.coords[:, 0]),
+    #         field.values,
+    #         bin_edges,
+    #         sampling_size=sampling_size,
+    #         sampling_seed=sampling_seed,
+    #         estimator="cressie",
+    #     )
+    #     # fit a Matern variogram model
+    #     # NOTE: may want to use custom Matern formulation
+    #     fit_model = gs.Matern(dim=2, nu=2.5)
+    #     fit_model.set_arg_bounds(var=[0.1, 10], nu=[0.2, 5], len_scale=[1, 500])
+    #     params, _ = fit_model.fit_variogram(bin_center, gamma, nu=False, nugget=False)
+    #     return (
+    #         params,
+    #         {"model": fit_model, "bins": bin_center, "emp_semivariogram": gamma},
+    #     )
+
+    # def _gs_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
+    #     """
+    #     Collects parameters needed for construction of process kernels and cross-kernels.
+
+    #     TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
+    #     """
+    #     params_1, vario_obj1 = self._params_from_variogram(
+    #         self.fields.field_1,
+    #         bin_edges,
+    #         sampling_size=sampling_size,
+    #         sampling_seed=sampling_seed,
+    #     )
+    #     params_2, vario_obj2 = self._params_from_variogram(
+    #         self.fields.field_2,
+    #         bin_edges,
+    #         sampling_size=sampling_size,
+    #         sampling_seed=sampling_seed,
+    #     )
+
+    #     self.kernel_1 = Matern(
+    #         sigma=np.sqrt(params_1["var"]),
+    #         nu=params_1["nu"],
+    #         len_scale=params_1["len_scale"],
+    #         nugget=params_1["nugget"],
+    #     )
+    #     self.kernel_2 = Matern(
+    #         sigma=np.sqrt(params_2["var"]),
+    #         nu=params_2["nu"],
+    #         len_scale=params_2["len_scale"],
+    #         nugget=params_2["nugget"],
+    #     )
+    #     self.kernel_b = Matern(
+    #         nu=0.5 * (self.kernel_1.nu + self.kernel_2.nu),
+    #         len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
+    #     )
+    #     self.rho = pearsonr(
+    #         *krige_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
+    #     )[0]
+
+    #     return self, (vario_obj1, vario_obj2)
+
+    def fit_empirical_kernels(
+        self,
+        bin_centers,
+        tol,
+        cov_guess,
+        cross_guess,
+        crop_lags=0.65,
+        standardize=False,
     ):
-        """
-        NOTE: This variogram model is represented over Euclidean distance so lengh scale will be wrong (though haversine distance availalbe via gs.variogram.estimator.unstructured). If we want to make a variogram estimate available, we should write it ourselves (then we also have more control, e.g. warnings when there are less than 30 obs in a bin).
-        """
-        # estimate variogram
-        bin_center, gamma = gs.vario_estimate_unstructured(
-            (field.coords[:, 1], field.coords[:, 0]),
-            field.values,
-            bin_edges,
-            sampling_size=sampling_size,
-            sampling_seed=sampling_seed,
-            estimator="cressie",
+        """Computes and fits individual variograms and a cross-covariogram. Kernels are updated with fitted parameters."""
+        variograms, params = vgm.variogram_analysis(
+            self.fields,
+            bin_centers,
+            tol,
+            cov_guess,
+            cross_guess,
+            crop_lags=crop_lags,
+            standardize=standardize,
         )
-        # fit a Matern variogram model
-        # NOTE: may want to use custom Matern formulation
-        fit_model = gs.Matern(dim=2, nu=2.5)
-        fit_model.set_arg_bounds(var=[0.1, 10], nu=[0.2, 5], len_scale=[1, 500])
-        params, _ = fit_model.fit_variogram(bin_center, gamma, nu=False, nugget=False)
-        return (
-            params,
-            {"model": fit_model, "bins": bin_center, "emp_semivariogram": gamma},
-        )
+        self.fields.variograms = variograms
 
-    def _params_from_variogram(self, mf, bin_centers):
-        """Fit covariance and cross-covariance parameters to empirical semivariograms and cross-covariogram, respectively."""
-        pass
+        names = [self.fields.field_1.data_name, "", self.fields.field_2.data_name]
+        if self.fields.timedelta < 0:
+            names[1] = f"{names[0]}:{names[2]}_back"
+        else:
+            names[1] = f"{names[0]}:{names[2]}_forward"
 
-    def empirical_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
-        """
-        Collects parameters needed for construction of process kernels and cross-kernels.
-
-        TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
-        """
-        params_1, vario_obj1 = self._params_from_variogram(
-            self.fields.field_1,
-            bin_edges,
-            sampling_size=sampling_size,
-            sampling_seed=sampling_seed,
-        )
-        params_2, vario_obj2 = self._params_from_variogram(
-            self.fields.field_2,
-            bin_edges,
-            sampling_size=sampling_size,
-            sampling_seed=sampling_seed,
-        )
-
-        self.kernel_1 = Matern(
-            sigma=np.sqrt(params_1["var"]),
-            nu=params_1["nu"],
-            len_scale=params_1["len_scale"],
-            nugget=params_1["nugget"],
-        )
-        self.kernel_2 = Matern(
-            sigma=np.sqrt(params_2["var"]),
-            nu=params_2["nu"],
-            len_scale=params_2["len_scale"],
-            nugget=params_2["nugget"],
-        )
-        self.kernel_b = Matern(
-            nu=0.5 * (self.kernel_1.nu + self.kernel_2.nu),
-            len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
-        )
-        self.rho = pearsonr(
-            *krige_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
-        )[0]
-
-        return self, (vario_obj1, vario_obj2)
+        params_arr = np.hstack([params[name] for name in names])
+        self.set_params(params_arr)
+        return self
 
     def set_params(self, params_arr):
         """Set model parameters."""
@@ -238,16 +263,60 @@ class BivariateMatern:
         """Return model parameters as a dict."""
         return {
             "sigma_11": self.kernel_1.sigma,
-            "nu_11": self.kernel_1.nu,
+            # "nu_11": self.kernel_1.nu,
             "len_scale_11": self.kernel_1.len_scale,
             "nugget_11": self.kernel_1.nugget,
             # "sigep_11": self.sigep_11,
-            "nu_12": self.kernel_b.nu,
+            # "nu_12": self.kernel_b.nu,
             "len_scale_12": self.kernel_b.len_scale,
             "rho": self.rho,
             "sigma_22": self.kernel_2.sigma,
-            "nu_22": self.kernel_2.nu,
+            # "nu_22": self.kernel_2.nu,
             "len_scale_22": self.kernel_2.len_scale,
             "nugget_22": self.kernel_2.nugget,
             # "sigep_22": self.sigep_22,
         }
+
+    def neg_log_lik(self, params, dist_blocks):
+        """Computes the (negative) log-likelihood of the supplied parameters."""
+        # construct joint covariance matrix
+        self.set_params(params)
+        print(self.get_params())
+        cov_mat = self.covariance_matrix(dist_blocks)
+
+        # inverse and determinant via Cholesky decomposition
+        cho_l, low = cho_factor(cov_mat, lower=True)
+        log_det = np.sum(np.log(np.diag(cho_l)))
+        quad_form = np.matmul(
+            self.fields.joint_data_vec,
+            cho_solve((cho_l, low), self.fields.joint_data_vec),
+        )
+
+        # negative log-likelihood (up to normalizing constants)
+        return log_det + 0.5 * quad_form
+
+    def fit(self, initial_guess=None, options=None):
+        """Fit model parameters by maximum likelihood estimation."""
+        # TODO: allow for variable smoothness, maybe use exponential transform for all but rho
+        if initial_guess is None:
+            initial_guess = list(self.get_params().values())
+        bounds = list(self.param_bounds.values())
+        dist_blocks = self.fields.get_joint_dists()
+
+        print(initial_guess, bounds)
+        # minimize the negative log-likelihood
+        optim_res = minimize(
+            self.neg_log_lik,
+            initial_guess,
+            bounds=bounds,
+            args=(dist_blocks),
+            method="L-BFGS-B",
+            options=options,
+        )
+        if optim_res.success is not True:
+            warnings.warn("ERROR: optimization did not converge.")
+        # check parameter validity (Gneiting et al. 2010, or just psd check?)
+        # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
+        # cho_factor(self.covariance_matrix(dist_blocks))
+        self.set_params(optim_res.x)
+        return self

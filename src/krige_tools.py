@@ -1,6 +1,7 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+from numba import njit
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -147,6 +148,8 @@ def match_data_locations(field_1, field_2):
     return df.values_1, df.values_2
 
 
+# TODO: test whether numba is actually faster here using toy arrays
+# @njit
 def pre_post_diag(u, A, v=None):
     """Returns the matrix product: diag(u) A diag(v).
 
@@ -157,4 +160,5 @@ def pre_post_diag(u, A, v=None):
     if v is None:
         v = u
     return np.matmul(np.diag(u), np.matmul(A, np.diag(v)))
+    # return np.diag(u) @ A @ np.diag(v)  # matmul doesn't play with numba
 

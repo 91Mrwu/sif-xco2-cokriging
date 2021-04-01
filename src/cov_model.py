@@ -52,11 +52,7 @@ class Matern:
 
 
 class BivariateMatern:
-    """Bivariate Matern kernel, or correlation function.
-    
-    NOTE: 
-    - we may want to use empirical standard deviation (temporal or spatial replication) for sigmas 
-    """
+    """Bivariate Matern kernel, or correlation function."""
 
     def __init__(
         self, fields, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=None
@@ -71,21 +67,22 @@ class BivariateMatern:
         self.kernel_b = Matern(nu=nu_b, len_scale=len_scale_b)
 
         self.fields = fields
+        # NOTE: do we want to take the mean here, or add values along diagonal individually?
         self.sigep_11 = fields.field_1.variance_estimate.mean()
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
         self.param_bounds = {
-            "sigma_11": (1e-3, 10.0),
+            "sigma_11": (0.5, 4.0),
             # "nu_11": [0.2, 5.0],
-            "len_scale_11": (1.0, 1e4),
-            "nugget_11": (0.5, 10.0),
+            "len_scale_11": (5e2, 5e3),
+            "nugget_11": (0.0, 1.0),
             # "nu_12": [0.2, 5.0],
-            "len_scale_12": (1.0, 1e4),
-            "rho": (-1.0, 1.0),
-            "sigma_22": (1e-3, 10.0),
+            "len_scale_12": (5e2, 5e3),
+            "rho": (-1.0, -0.01),
+            "sigma_22": (0.5, 4.0),
             # "nu_22": [0.2, 5.0],
-            "len_scale_22": (1.0, 1e4),
-            "nugget_22": (0.5, 10.0),
+            "len_scale_22": (5e2, 5e3),
+            "nugget_22": (0.0, 1.0),
         }
 
     def pred_covariance(self, dist_mat):
@@ -143,6 +140,42 @@ class BivariateMatern:
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
         return krige_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
+
+    def set_params(self, params_arr):
+        """Set model parameters."""
+        self.kernel_1.sigma = params_arr[0]
+        # self.kernel_1.nu =
+        self.kernel_1.len_scale = params_arr[1]
+        self.kernel_1.nugget = params_arr[2]
+        # self.kernel_b.nu =
+        self.kernel_b.len_scale = params_arr[3]
+        self.rho = params_arr[4]
+        self.kernel_2.sigma = params_arr[5]
+        # self.kernel_2.nu =
+        self.kernel_2.len_scale = params_arr[6]
+        self.kernel_2.nugget = params_arr[7]
+
+    def set_param_bounds(self, bounds):
+        """Set default parameter bounds using dictionary of lists."""
+        self.param_bounds.update(bounds)
+
+    def get_params(self):
+        """Return model parameters as a dict."""
+        return {
+            "sigma_11": self.kernel_1.sigma,
+            # "nu_11": self.kernel_1.nu,
+            "len_scale_11": self.kernel_1.len_scale,
+            "nugget_11": self.kernel_1.nugget,
+            # "sigep_11": self.sigep_11,
+            # "nu_12": self.kernel_b.nu,
+            "len_scale_12": self.kernel_b.len_scale,
+            "rho": self.rho,
+            "sigma_22": self.kernel_2.sigma,
+            # "nu_22": self.kernel_2.nu,
+            "len_scale_22": self.kernel_2.len_scale,
+            "nugget_22": self.kernel_2.nugget,
+            # "sigep_22": self.sigep_22,
+        }
 
     # def _params_from_gstools(
     #     self, field, bin_edges, sampling_size=None, sampling_seed=None
@@ -241,51 +274,19 @@ class BivariateMatern:
         self.set_params(params_arr)
         return self
 
-    def set_params(self, params_arr):
-        """Set model parameters."""
-        self.kernel_1.sigma = params_arr[0]
-        # self.kernel_1.nu =
-        self.kernel_1.len_scale = params_arr[1]
-        self.kernel_1.nugget = params_arr[2]
-        # self.kernel_b.nu =
-        self.kernel_b.len_scale = params_arr[3]
-        self.rho = params_arr[4]
-        self.kernel_2.sigma = params_arr[5]
-        # self.kernel_2.nu =
-        self.kernel_2.len_scale = params_arr[6]
-        self.kernel_2.nugget = params_arr[7]
-
-    def set_param_bounds(self, bounds):
-        """Set default parameter bounds using dictionary of lists."""
-        self.param_bounds.update(bounds)
-
-    def get_params(self):
-        """Return model parameters as a dict."""
-        return {
-            "sigma_11": self.kernel_1.sigma,
-            # "nu_11": self.kernel_1.nu,
-            "len_scale_11": self.kernel_1.len_scale,
-            "nugget_11": self.kernel_1.nugget,
-            # "sigep_11": self.sigep_11,
-            # "nu_12": self.kernel_b.nu,
-            "len_scale_12": self.kernel_b.len_scale,
-            "rho": self.rho,
-            "sigma_22": self.kernel_2.sigma,
-            # "nu_22": self.kernel_2.nu,
-            "len_scale_22": self.kernel_2.len_scale,
-            "nugget_22": self.kernel_2.nugget,
-            # "sigep_22": self.sigep_22,
-        }
-
     def neg_log_lik(self, params, dist_blocks):
         """Computes the (negative) log-likelihood of the supplied parameters."""
         # construct joint covariance matrix
         self.set_params(params)
-        print(self.get_params())
         cov_mat = self.covariance_matrix(dist_blocks)
 
         # inverse and determinant via Cholesky decomposition
-        cho_l, low = cho_factor(cov_mat, lower=True)
+        try:
+            cho_l, low = cho_factor(cov_mat, lower=True)
+        except:
+            # covariance matrix is not positive definite
+            return np.inf
+
         log_det = np.sum(np.log(np.diag(cho_l)))
         quad_form = np.matmul(
             self.fields.joint_data_vec,
@@ -303,7 +304,6 @@ class BivariateMatern:
         bounds = list(self.param_bounds.values())
         dist_blocks = self.fields.get_joint_dists()
 
-        print(initial_guess, bounds)
         # minimize the negative log-likelihood
         optim_res = minimize(
             self.neg_log_lik,

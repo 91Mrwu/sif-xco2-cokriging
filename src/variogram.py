@@ -120,7 +120,7 @@ def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
 
 
 @njit(parallel=True)
-def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data):
+def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data, covariogram):
     """For a fixed temporal lag, compute vario calc at all spatial lags in parallel."""
     v = np.zeros_like(space_lags)
     counts = np.zeros_like(space_lags)
@@ -129,7 +129,10 @@ def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data):
         pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
+        if covariogram:
+            v[h], counts[h] = spacetime_cov_calc(data, data, pairs_time, pairs_space)
+        else:
+            v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
 
     return v, counts
 
@@ -149,7 +152,9 @@ def apply_xcov_calc(space_lags, dist_space, tol, pairs_time, data1, data2):
     return v, counts
 
 
-def empirical_variogram(df, name, space_lags, tol, time_lag, crop_lags=0.65):
+def empirical_variogram(
+    df, name, space_lags, tol, time_lag, crop_lags=0.65, covariogram=False
+):
     """Basic function to compute a variogram from a dataframe."""
     # Establish space-time domain
     times = np.unique(df["time"].values)
@@ -240,6 +245,10 @@ def matern_vario(xdata, sigma, len_scale, nugget):
     return sigma ** 2 * (1 - matern_correlation(xdata, len_scale)) + nugget
 
 
+def matern_cov(xdata, sigma, len_scale, nugget):
+    pass
+
+
 def matern_cross_cov(xdata, sigmas, len_scale, rho):
     return rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, len_scale)
 
@@ -250,22 +259,13 @@ def weighted_least_squares(params, xdata, ydata, bin_counts, sigmas):
     else:
         yfit = matern_vario(xdata, *params)
 
-    # NOTE: should division be by parameterized or empirical value (difference between geoR and paper; results are about the same)?
-    # zeros = np.argwhere(yfit == 0.0)
-    # non_zero = np.argwhere(yfit != 0.0)
-    # wls = np.zeros_like(yfit)
-    # wls[zeros] = bin_counts[zeros] * ydata[zeros] ** 2
-    # wls[non_zero] = (
-    #     bin_counts[non_zero]
-    #     * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
-    # )
-    zeros = np.argwhere(ydata == 0.0)
-    non_zero = np.argwhere(ydata != 0.0)
+    zeros = np.argwhere(yfit == 0.0)
+    non_zero = np.argwhere(yfit != 0.0)
     wls = np.zeros_like(yfit)
-    wls[zeros] = bin_counts[zeros] * yfit[zeros] ** 2
+    wls[zeros] = bin_counts[zeros] * ydata[zeros] ** 2
     wls[non_zero] = (
         bin_counts[non_zero]
-        * ((ydata[non_zero] - yfit[non_zero]) / ydata[non_zero]) ** 2
+        * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
     )
     return np.sum(wls)
 

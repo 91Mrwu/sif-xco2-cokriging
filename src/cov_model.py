@@ -71,15 +71,30 @@ class BivariateMatern:
         self.sigep_11 = fields.field_1.variance_estimate.mean()
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
+        # restricted
+        # self.param_bounds = {
+        #     "sigma_11": (0.1, 0.4),
+        #     # "nu_11": [0.2, 5.0],
+        #     "len_scale_11": (5e2, 2e3),
+        #     "nugget_11": (0.0, 1.0),
+        #     # "nu_12": [0.2, 5.0],
+        #     "len_scale_12": (1e3, 5e3),
+        #     "rho": (-1.0, -0.01),
+        #     "sigma_22": (0.7, 1.2),
+        #     # "nu_22": [0.2, 5.0],
+        #     "len_scale_22": (5e2, 2e3),
+        #     "nugget_22": (0.0, 1.0),
+        # }
+        # reasonable
         self.param_bounds = {
-            "sigma_11": (0.5, 4.0),
+            "sigma_11": (0.2, 4.0),
             # "nu_11": [0.2, 5.0],
             "len_scale_11": (5e2, 5e3),
             "nugget_11": (0.0, 1.0),
             # "nu_12": [0.2, 5.0],
             "len_scale_12": (5e2, 5e3),
             "rho": (-1.0, -0.01),
-            "sigma_22": (0.5, 4.0),
+            "sigma_22": (0.2, 4.0),
             # "nu_22": [0.2, 5.0],
             "len_scale_22": (5e2, 5e3),
             "nugget_22": (0.0, 1.0),
@@ -243,7 +258,7 @@ class BivariateMatern:
 
     #     return self, (vario_obj1, vario_obj2)
 
-    def fit_empirical_kernels(
+    def empirical_variograms(
         self,
         bin_centers,
         tol,
@@ -264,15 +279,15 @@ class BivariateMatern:
         )
         self.fields.variograms = variograms
 
-        names = [self.fields.field_1.data_name, "", self.fields.field_2.data_name]
-        if self.fields.timedelta < 0:
-            names[1] = f"{names[0]}:{names[2]}_back"
-        else:
-            names[1] = f"{names[0]}:{names[2]}_forward"
+        # names = [self.fields.field_1.data_name, "", self.fields.field_2.data_name]
+        # if self.fields.timedelta < 0:
+        #     names[1] = f"{names[0]}:{names[2]}_back"
+        # else:
+        #     names[1] = f"{names[0]}:{names[2]}_forward"
 
-        params_arr = np.hstack([params[name] for name in names])
-        self.set_params(params_arr)
-        return self
+        # params_arr = np.hstack([params[name] for name in names])
+        # self.set_params(params_arr)
+        return variograms, params
 
     def neg_log_lik(self, params, dist_blocks):
         """Computes the (negative) log-likelihood of the supplied parameters."""
@@ -313,10 +328,12 @@ class BivariateMatern:
             method="L-BFGS-B",
             options=options,
         )
+        self.set_params(optim_res.x)
         if optim_res.success is not True:
-            warnings.warn("ERROR: optimization did not converge.")
+            raise Exception(
+                f"ERROR: optimization did not converge. Terminated with message: {optim_res.message}"
+            )
         # check parameter validity (Gneiting et al. 2010, or just psd check?)
         # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
         # cho_factor(self.covariance_matrix(dist_blocks))
-        self.set_params(optim_res.x)
         return self

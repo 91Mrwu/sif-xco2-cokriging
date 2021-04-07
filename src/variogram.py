@@ -9,6 +9,16 @@ from scipy.optimize import curve_fit, minimize
 from krige_tools import distance_matrix
 
 # TODO: establish a variogram class
+SIG_L = 0.4
+SIG_U = 4.0
+NU_L = 0.2
+NU_U = 0.5
+LEN_L = 2e3
+LEN_U = 5e4
+NUG_L = 0.0
+NUG_U = 1.0
+RHO_L = -1.0
+RHO_U = -0.1
 
 
 def crop_lag_vec(lags, dist, frac=0.65):
@@ -198,7 +208,7 @@ def empirical_variogram(
 
 
 def empirical_cross_cov(
-    data_dict, space_lags, tol, time_lag, crop_lags=0.65, normalize=False
+    data_dict, space_lags, tol, time_lag, crop_lags=0.65, normalize=False, sigmas=None
 ):
     """Basic function to compute a cross covariogram from a pair of dataframes stored in dict."""
     names = list(data_dict.keys())
@@ -230,7 +240,8 @@ def empirical_cross_cov(
         space_lags, dist_space, tol, pairs_time, data[0], data[1]
     )
     if normalize:
-        df_cov[cross_name] = df_cov[cross_name] / np.abs(df_cov[cross_name][0])
+        assert sigmas is not None
+        df_cov[cross_name] = df_cov[cross_name] / np.prod(sigmas)
     if (df_cov["counts"] < 30).any():
         warnings.warn(
             f"WARNING: Fewer than 30 pairs used for at least one bin in covariogram calculation."
@@ -240,8 +251,8 @@ def empirical_cross_cov(
 
 
 # TODO: add ability to `freeze` parameters
-def matern_correlation(xdata, len_scale):
-    nu = 1.5
+def matern_correlation(xdata, nu, len_scale):
+    # nu = 1.5
     xdata_ = xdata[xdata > 0.0] / len_scale
     corr = np.ones_like(xdata)
     corr[xdata > 0.0] = np.exp(
@@ -256,22 +267,37 @@ def matern_correlation(xdata, len_scale):
     return corr
 
 
-def matern_vario(xdata, sigma, len_scale, nugget):
-    return sigma ** 2 * (1 - matern_correlation(xdata, len_scale)) + nugget
+# NOTE: this parameterization requires longer length scales when fitting (which seems counter intuitive)
+# def matern_correlation(xdata, nu, len_scale):
+#     # nu = 1.5
+#     xdata_ = xdata[xdata > 0.0] / len_scale
+#     corr = np.ones_like(xdata)
+#     corr[xdata > 0.0] = np.exp(
+#         (1.0 - nu) * np.log(2) - sps.gammaln(nu) + nu * np.log(xdata_)
+#     ) * sps.kv(nu, xdata_)
+
+#     corr[np.logical_not(np.isfinite(corr))] = 0.0
+#     # normalized Matern is positive
+#     corr = np.maximum(corr, 0.0)
+#     return corr
 
 
-def matern_cov(xdata, sigma, len_scale, nugget):
-    cov = sigma ** 2 * matern_correlation(xdata, len_scale)
+def matern_vario(xdata, sigma, nu, len_scale, nugget):
+    return sigma ** 2 * (1 - matern_correlation(xdata, nu, len_scale)) + nugget
+
+
+def matern_cov(xdata, sigma, nu, len_scale, nugget):
+    cov = sigma ** 2 * matern_correlation(xdata, nu, len_scale)
     cov[xdata == 0] += nugget
     return cov
 
 
-def matern_cross_cov(xdata, sigmas, len_scale, rho):
-    return rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, len_scale)
+def matern_cross_cov(xdata, sigmas, nu, len_scale, rho):
+    return rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, nu, len_scale)
 
 
-def matern_cross_corr(xdata, len_scale, rho):
-    return rho * matern_correlation(xdata, len_scale)
+def matern_cross_corr(xdata, nu, len_scale, rho):
+    return rho * matern_correlation(xdata, nu, len_scale)
 
 
 def weighted_least_squares(ydata, yfit, bin_counts):
@@ -304,26 +330,6 @@ def wls_cost_norm(params, xdata, ydata, bin_counts, cross):
     return weighted_least_squares(ydata, yfit, bin_counts)
 
 
-def fit_variogram(xdata, ydata, initial_guess, cross=False):
-    """Fit covariance parameters to empirical variogram by non-linear least squares."""
-    kwargs = {"loss": "soft_l1", "verbose": 1}
-    if cross:
-        # Fit using covariogram
-        bounds = ([0.01, 0.01, 0.1, -1.0], [10.0, 10.0, 1e4, 1.0])  # (lwr, upr)
-        params, _ = curve_fit(
-            matern_cross_cov, xdata, ydata, p0=initial_guess, bounds=bounds, **kwargs
-        )
-        fit = matern_cross_cov(xdata, *params)
-    else:
-        # Fit using variogram
-        bounds = ([0.01, 0.1, 0.0], [10.0, 1e4, 10.0])  # (lwr, upr)
-        params, _ = curve_fit(
-            matern_vario, xdata, ydata, p0=initial_guess, bounds=bounds, **kwargs
-        )
-        fit = matern_vario(xdata, *params)
-    return params, fit
-
-
 def fit_variogram_wls(
     xdata,
     ydata,
@@ -352,8 +358,8 @@ def fit_variogram_wls(
     pred = np.linspace(xdata.min(), xdata.max(), 100)
     if covariogram:
         if cross:
-            assert len(initial_guess) == 2
-            bounds = [(xdata[xdata > 0].min(), 1.5e4), (-1.5, -0.1)]
+            assert len(initial_guess) == 3
+            bounds = [(NU_L, NU_U), (LEN_L, LEN_U), (RHO_L, RHO_U)]
             if normalized:
                 # Cross correlation, fit cross correlogram
                 optim_result = minimize(
@@ -384,8 +390,8 @@ def fit_variogram_wls(
         else:
             if normalized:
                 # Univariate correlation, fit correlogram
-                assert len(initial_guess) == 1
-                bounds = [(xdata[xdata > 0].min(), 1.5e4)]
+                assert len(initial_guess) == 2
+                bounds = [(NU_L, NU_U), (LEN_L, LEN_U)]
                 optim_result = minimize(
                     wls_cost_norm,
                     initial_guess,
@@ -396,8 +402,8 @@ def fit_variogram_wls(
                 fit = matern_correlation(pred, *optim_result.x)
             else:
                 # Univariate covariance, fit covariogram
-                assert len(initial_guess) == 3
-                bounds = [(0.01, 4.0), (xdata[xdata > 0].min(), 1.5e4), (0.0, 1.0)]
+                assert len(initial_guess) == 4
+                bounds = [(SIG_L, SIG_U), (NU_L, NU_U), (LEN_L, LEN_U), (NUG_L, NUG_U)]
                 optim_result = minimize(
                     wls_cost,
                     initial_guess,
@@ -416,7 +422,7 @@ def fit_variogram_wls(
     else:
         # Univariate covariance, fit variogram
         assert len(initial_guess) == 3
-        bounds = [(0.01, 4.0), (xdata[xdata > 0].min(), 1.5e4), (0.0, 1.0)]
+        bounds = [(SIG_L, SIG_U), (NU_L, NU_U), (LEN_L, LEN_U), (NUG_L, NUG_U)]
         optim_result = minimize(
             wls_cost,
             initial_guess,
@@ -427,9 +433,26 @@ def fit_variogram_wls(
         fit = matern_vario(pred, *optim_result.x)
 
     if optim_result.success == False:
+        print("ERROR: optimization did not converge.")
         warnings.warn("ERROR: optimization did not converge.")
 
     return optim_result.x, pd.DataFrame({"lag": pred, "wls_fit": fit})
+
+
+def check_cauchyshwarz(variograms, names):
+    """Check the Cauchy-Shwarz inequality."""
+    n1 = names[0]
+    n2 = names[1]
+    cross_name = f"{n1}:{n2}"
+
+    s1 = np.sqrt(variograms[n1][variograms[n1]["lag"] == 0][n1][0])
+    s2 = np.sqrt(variograms[n2][variograms[n2]["lag"] == 0][n2][0])
+    cross_cov = np.abs(
+        variograms[cross_name][variograms[cross_name]["lag"] == 0][cross_name][0]
+    )
+
+    if cross_cov > s1 * s2:
+        warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
 
 
 def variogram_analysis(
@@ -452,8 +475,8 @@ def variogram_analysis(
         tol: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates; note that this can be seen as a rolling window so depending on the size, some pairs may be repeated in multiple bins
         crop_lags: should spatial lag vector be trimmed to a fraction of the maximum distance, and formatted such that the first non-zero element is at least the minimum distance?
         standardize: should each data variable be locally standardized?
-        cov_guess: covariance params initial guess for WLS fit; list [sigma, len_scale, nugget]
-        cross_guess: cross-cov parmas initial guess for WLS fit; list [len_scale, rho]
+        cov_guess: covariance params initial guess for WLS fit; list [sigma, nu, len_scale, nugget]
+        cross_guess: cross-cov parmas initial guess for WLS fit; list [nu, len_scale, rho]
 
     Returns:
         variograms: dictionary containing variogram and cross-covariogram dataframes 
@@ -485,6 +508,7 @@ def variogram_analysis(
     # Compute and fit variograms and cross-covariogram
     variograms = dict()
     params_fit = dict()
+    sigmas_fit = list()
     sigmas = list()
     for name in names:
         # NOTE: no temporal lag in variograms
@@ -506,8 +530,9 @@ def variogram_analysis(
             covariogram=covariograms,
             normalized=normalize_cov,
         )
+        sigmas.append(np.sqrt(variograms[name][name][0]))  # empirical std. dev.
+        sigmas_fit.append(params_fit[name][0])
         variograms[name] = pd.merge(variograms[name], df_fit, on="lag", how="outer")
-        sigmas.append(params_fit[name][0])
 
     cross_name = f"{names[0]}:{names[1]}"
     variograms[cross_name] = empirical_cross_cov(
@@ -517,13 +542,14 @@ def variogram_analysis(
         time_lag,
         crop_lags=crop_lags,
         normalize=normalize_cov,
+        sigmas=sigmas,
     )
     params_fit[cross_name], df_fit = fit_variogram_wls(
         variograms[cross_name]["lag"],
         variograms[cross_name][cross_name],
         variograms[cross_name]["counts"],
         cross_guess,
-        sigmas=sigmas,
+        sigmas=sigmas_fit,
         covariogram=True,
         cross=True,
         normalized=normalize_cov,
@@ -531,6 +557,7 @@ def variogram_analysis(
     variograms[cross_name] = pd.merge(
         variograms[cross_name], df_fit, on="lag", how="outer"
     )
+    check_cauchyshwarz(variograms, names)
 
     return variograms, params_fit
 

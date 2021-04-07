@@ -71,7 +71,7 @@ class BivariateMatern:
         self.sigep_11 = fields.field_1.variance_estimate.mean()
         self.sigep_22 = fields.field_2.variance_estimate.mean()
 
-        # restricted
+        # reasonable
         # self.param_bounds = {
         #     "sigma_11": (0.1, 0.4),
         #     # "nu_11": [0.2, 5.0],
@@ -85,18 +85,18 @@ class BivariateMatern:
         #     "len_scale_22": (5e2, 2e3),
         #     "nugget_22": (0.0, 1.0),
         # }
-        # reasonable
+        # restricted
         self.param_bounds = {
             "sigma_11": (0.2, 4.0),
-            # "nu_11": [0.2, 5.0],
-            "len_scale_11": (5e2, 5e3),
+            "nu_11": [0.2, 0.5],
+            "len_scale_11": (2e3, 5e4),
             "nugget_11": (0.0, 1.0),
-            # "nu_12": [0.2, 5.0],
-            "len_scale_12": (5e2, 5e3),
+            "nu_12": [0.2, 0.5],
+            "len_scale_12": (2e3, 5e4),
             "rho": (-1.0, -0.01),
             "sigma_22": (0.2, 4.0),
-            # "nu_22": [0.2, 5.0],
-            "len_scale_22": (5e2, 5e3),
+            "nu_22": [0.2, 0.5],
+            "len_scale_22": (2e3, 5e4),
             "nugget_22": (0.0, 1.0),
         }
 
@@ -159,16 +159,16 @@ class BivariateMatern:
     def set_params(self, params_arr):
         """Set model parameters."""
         self.kernel_1.sigma = params_arr[0]
-        # self.kernel_1.nu =
-        self.kernel_1.len_scale = params_arr[1]
-        self.kernel_1.nugget = params_arr[2]
-        # self.kernel_b.nu =
-        self.kernel_b.len_scale = params_arr[3]
-        self.rho = params_arr[4]
-        self.kernel_2.sigma = params_arr[5]
-        # self.kernel_2.nu =
-        self.kernel_2.len_scale = params_arr[6]
-        self.kernel_2.nugget = params_arr[7]
+        self.kernel_1.nu = params_arr[1]
+        self.kernel_1.len_scale = params_arr[2]
+        self.kernel_1.nugget = params_arr[3]
+        self.kernel_b.nu = params_arr[4]
+        self.kernel_b.len_scale = params_arr[5]
+        self.rho = params_arr[6]
+        self.kernel_2.sigma = params_arr[7]
+        self.kernel_2.nu = params_arr[8]
+        self.kernel_2.len_scale = params_arr[9]
+        self.kernel_2.nugget = params_arr[10]
 
     def set_param_bounds(self, bounds):
         """Set default parameter bounds using dictionary of lists."""
@@ -178,15 +178,15 @@ class BivariateMatern:
         """Return model parameters as a dict."""
         return {
             "sigma_11": self.kernel_1.sigma,
-            # "nu_11": self.kernel_1.nu,
+            "nu_11": self.kernel_1.nu,
             "len_scale_11": self.kernel_1.len_scale,
             "nugget_11": self.kernel_1.nugget,
             # "sigep_11": self.sigep_11,
-            # "nu_12": self.kernel_b.nu,
+            "nu_12": self.kernel_b.nu,
             "len_scale_12": self.kernel_b.len_scale,
             "rho": self.rho,
             "sigma_22": self.kernel_2.sigma,
-            # "nu_22": self.kernel_2.nu,
+            "nu_22": self.kernel_2.nu,
             "len_scale_22": self.kernel_2.len_scale,
             "nugget_22": self.kernel_2.nugget,
             # "sigep_22": self.sigep_22,

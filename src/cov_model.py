@@ -266,6 +266,8 @@ class BivariateMatern:
         cross_guess,
         crop_lags=0.65,
         standardize=False,
+        covariograms=False,
+        normalize_cov=False,
     ):
         """Computes and fits individual variograms and a cross-covariogram. Kernels are updated with fitted parameters."""
         variograms, params = vgm.variogram_analysis(
@@ -276,6 +278,8 @@ class BivariateMatern:
             cross_guess,
             crop_lags=crop_lags,
             standardize=standardize,
+            covariograms=covariograms,
+            normalize_cov=normalize_cov,
         )
         self.fields.variograms = variograms
 

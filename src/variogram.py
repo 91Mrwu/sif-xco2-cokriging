@@ -29,6 +29,7 @@ def distance_matrix_time(T1, T2, units="M"):
 @njit
 def get_dist_pairs(D, dist, tol=0.0):
     """Returns indices of pairs within a tolerance of the specified distance from distance matrix D."""
+    # NOTE: to get neg. dists, consider pairs[pairs[:, 0] < pairs[:, 1]] from "directional setting"
     if dist == 0 or tol == 0:
         pairs = np.argwhere(D == dist)
     else:
@@ -38,12 +39,9 @@ def get_dist_pairs(D, dist, tol=0.0):
 
 @njit
 def directional_pairs(D, dist):
-    """Returns backward and forward pairs. For use with temporal distance matrix D."""
+    """Returns backward pairs. For use with temporal distance matrix D."""
     pairs = get_dist_pairs(D, dist)
-    forward = pairs[pairs[:, 0] < pairs[:, 1]]
-    back = pairs[pairs[:, 0] >= pairs[:, 1]]
-    assert back.shape == forward.shape
-    return back, forward
+    return pairs[pairs[:, 0] >= pairs[:, 1]]
 
 
 @njit
@@ -120,7 +118,7 @@ def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
 
 
 @njit(parallel=True)
-def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data, covariogram):
+def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data):
     """For a fixed temporal lag, compute vario calc at all spatial lags in parallel."""
     v = np.zeros_like(space_lags)
     counts = np.zeros_like(space_lags)
@@ -129,10 +127,7 @@ def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data, covariogram)
         pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        if covariogram:
-            v[h], counts[h] = spacetime_cov_calc(data, data, pairs_time, pairs_space)
-        else:
-            v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
+        v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
 
     return v, counts
 
@@ -153,7 +148,14 @@ def apply_xcov_calc(space_lags, dist_space, tol, pairs_time, data1, data2):
 
 
 def empirical_variogram(
-    df, name, space_lags, tol, time_lag, crop_lags=0.65, covariogram=False
+    df,
+    name,
+    space_lags,
+    tol,
+    time_lag,
+    crop_lags=0.65,
+    covariogram=True,
+    normalize=False,
 ):
     """Basic function to compute a variogram from a dataframe."""
     # Establish space-time domain
@@ -177,9 +179,16 @@ def empirical_variogram(
     df_vgm = pd.DataFrame({"lag": space_lags})
 
     # Compute variogram
-    df_vgm[name], df_vgm["counts"] = apply_vario_calc(
-        space_lags, dist_space, tol, pairs_time, data
-    )
+    if covariogram:
+        df_vgm[name], df_vgm["counts"] = apply_xcov_calc(
+            space_lags, dist_space, tol, pairs_time, data, data
+        )
+        if normalize:
+            df_vgm[name] = df_vgm[name] / df_vgm[name][0]
+    else:
+        df_vgm[name], df_vgm["counts"] = apply_vario_calc(
+            space_lags, dist_space, tol, pairs_time, data
+        )
     if (df_vgm["counts"] < 30).any():
         warnings.warn(
             f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
@@ -188,12 +197,16 @@ def empirical_variogram(
     return df_vgm
 
 
-def empirical_cross_cov(data_dict, space_lags, tol, time_lag, crop_lags=0.65):
+def empirical_cross_cov(
+    data_dict, space_lags, tol, time_lag, crop_lags=0.65, normalize=False
+):
     """Basic function to compute a cross covariogram from a pair of dataframes stored in dict."""
     names = list(data_dict.keys())
     # Establish space-time domains
-    times = [np.unique(data_dict[var]["time"].values) for var in names]
-    coords = [np.unique(data_dict[var][["lat", "lon"]].values, axis=0) for var in names]
+    times = [np.unique(data_dict[name]["time"].values) for name in names]
+    coords = [
+        np.unique(data_dict[name][["lat", "lon"]].values, axis=0) for name in names
+    ]
 
     # Precompute distances
     dist_time = distance_matrix_time(times[0], times[1])
@@ -205,39 +218,41 @@ def empirical_cross_cov(data_dict, space_lags, tol, time_lag, crop_lags=0.65):
     assert time_lag <= dist_time.max()
 
     # Get directional temporal pairs (don't assume symmetry)
-    back_pairs, forward_pairs = directional_pairs(dist_time, time_lag)
+    pairs_time = directional_pairs(dist_time, time_lag)
 
     # Format data and variogram dataframe
-    data = [data_dict[var][["t_id", "loc_id"] + [var]].values for var in names]
-    df_cov_back = pd.DataFrame({"lag": space_lags})
-    df_cov_forward = pd.DataFrame({"lag": space_lags})
+    data = [data_dict[name][["t_id", "loc_id"] + [name]].values for name in names]
+    df_cov = pd.DataFrame({"lag": space_lags})
 
     # Compute cross-covariograms
-    df_cov_back[f"{names[0]}:{names[1]}"], df_cov_back["counts"] = apply_xcov_calc(
-        space_lags, dist_space, tol, back_pairs, data[0], data[1]
+    cross_name = f"{names[0]}:{names[1]}"
+    df_cov[cross_name], df_cov["counts"] = apply_xcov_calc(
+        space_lags, dist_space, tol, pairs_time, data[0], data[1]
     )
-    (
-        df_cov_forward[f"{names[0]}:{names[1]}"],
-        df_cov_forward["counts"],
-    ) = apply_xcov_calc(space_lags, dist_space, tol, forward_pairs, data[0], data[1])
-    if (df_cov_back["counts"] < 30).any() or (df_cov_forward["counts"] < 30).any():
+    if normalize:
+        df_cov[cross_name] = df_cov[cross_name] / np.abs(df_cov[cross_name][0])
+    if (df_cov["counts"] < 30).any():
         warnings.warn(
-            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+            f"WARNING: Fewer than 30 pairs used for at least one bin in covariogram calculation."
         )
 
-    return df_cov_back, df_cov_forward
+    return df_cov
 
 
 # TODO: add ability to `freeze` parameters
 def matern_correlation(xdata, len_scale):
     nu = 1.5
-    xdata_ = (xdata / len_scale)[xdata > 0.0]
+    xdata_ = xdata[xdata > 0.0] / len_scale
     corr = np.ones_like(xdata)
     corr[xdata > 0.0] = np.exp(
         (1.0 - nu) * np.log(2)
         - sps.gammaln(nu)
         + nu * np.log(np.sqrt(2.0 * nu) * xdata_)
     ) * sps.kv(nu, np.sqrt(2.0 * nu) * xdata_)
+
+    corr[np.logical_not(np.isfinite(corr))] = 0.0
+    # normalized Matern is positive
+    corr = np.maximum(corr, 0.0)
     return corr
 
 
@@ -246,28 +261,47 @@ def matern_vario(xdata, sigma, len_scale, nugget):
 
 
 def matern_cov(xdata, sigma, len_scale, nugget):
-    pass
+    cov = sigma ** 2 * matern_correlation(xdata, len_scale)
+    cov[xdata == 0] += nugget
+    return cov
 
 
 def matern_cross_cov(xdata, sigmas, len_scale, rho):
     return rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, len_scale)
 
 
-def weighted_least_squares(params, xdata, ydata, bin_counts, sigmas):
-    if sigmas is not None:
-        yfit = matern_cross_cov(xdata, sigmas, *params)
-    else:
-        yfit = matern_vario(xdata, *params)
+def matern_cross_corr(xdata, len_scale, rho):
+    return rho * matern_correlation(xdata, len_scale)
 
+
+def weighted_least_squares(ydata, yfit, bin_counts):
     zeros = np.argwhere(yfit == 0.0)
     non_zero = np.argwhere(yfit != 0.0)
     wls = np.zeros_like(yfit)
-    wls[zeros] = bin_counts[zeros] * ydata[zeros] ** 2
+    wls[zeros] = bin_counts[zeros] * ydata[zeros] ** 2  # NOTE: is this wrong to do?
     wls[non_zero] = (
         bin_counts[non_zero]
         * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
     )
     return np.sum(wls)
+
+
+def wls_cost(params, xdata, ydata, bin_counts, sigmas, covariogram):
+    if sigmas is not None:
+        yfit = matern_cross_cov(xdata, sigmas, *params)
+    elif covariogram:
+        yfit = matern_cov(xdata, *params)
+    else:
+        yfit = matern_vario(xdata, *params)
+    return weighted_least_squares(ydata, yfit, bin_counts)
+
+
+def wls_cost_norm(params, xdata, ydata, bin_counts, cross):
+    if cross:
+        yfit = matern_cross_corr(xdata, *params)
+    else:
+        yfit = matern_correlation(xdata, *params)
+    return weighted_least_squares(ydata, yfit, bin_counts)
 
 
 def fit_variogram(xdata, ydata, initial_guess, cross=False):
@@ -290,7 +324,16 @@ def fit_variogram(xdata, ydata, initial_guess, cross=False):
     return params, fit
 
 
-def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
+def fit_variogram_wls(
+    xdata,
+    ydata,
+    bin_counts,
+    initial_guess,
+    sigmas=None,
+    covariogram=True,
+    cross=False,
+    normalized=False,
+):
     """
     Fit covariance parameters to empirical (co)variogram by weighted least squares (Cressie, 1985).
     
@@ -300,43 +343,105 @@ def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
         bin_counts: pd.series indicating the number of spatio-temporal point pairs used to calculate each empirical value
         initial_guess: list of parameter starting values given as one of [sigma, len_scale, nugget] or [len_scale, rho]
         sigmas: list of standard deviations if fitting a cross covariance
+        cross: cross dependence?
+        normalized: correlation (True), covariance (False)
     Returns:
         params: list of parameter values
         fit: the theoretical (co)variogram fit
     """
-    if sigmas is not None:
-        # Cross covariance, fit using covariogram
-        assert len(initial_guess) == 2
-        bounds = [(xdata[xdata > 0].min(), 4e3), (-1.0, 1.0)]
-        optim_result = minimize(
-            weighted_least_squares,
-            initial_guess,
-            args=(xdata.values, ydata.values, bin_counts.values, sigmas),
-            method="L-BFGS-B",
-            bounds=bounds,
-        )
-        fit = matern_cross_cov(xdata, sigmas, *optim_result.x)
+    pred = np.linspace(xdata.min(), xdata.max(), 100)
+    if covariogram:
+        if cross:
+            assert len(initial_guess) == 2
+            bounds = [(xdata[xdata > 0].min(), 1.5e4), (-1.5, -0.1)]
+            if normalized:
+                # Cross correlation, fit cross correlogram
+                optim_result = minimize(
+                    wls_cost_norm,
+                    initial_guess,
+                    args=(xdata.values, ydata.values, bin_counts.values, True),
+                    method="L-BFGS-B",
+                    bounds=bounds,
+                )
+                fit = matern_cross_corr(pred, *optim_result.x)
+            else:
+                # Cross covariance, fit cross covariogram
+                assert sigmas is not None
+                optim_result = minimize(
+                    wls_cost,
+                    initial_guess,
+                    args=(
+                        xdata.values,
+                        ydata.values,
+                        bin_counts.values,
+                        sigmas,
+                        covariogram,
+                    ),
+                    method="L-BFGS-B",
+                    bounds=bounds,
+                )
+                fit = matern_cross_cov(pred, sigmas, *optim_result.x)
+        else:
+            if normalized:
+                # Univariate correlation, fit correlogram
+                assert len(initial_guess) == 1
+                bounds = [(xdata[xdata > 0].min(), 1.5e4)]
+                optim_result = minimize(
+                    wls_cost_norm,
+                    initial_guess,
+                    args=(xdata.values, ydata.values, bin_counts.values, False),
+                    method="L-BFGS-B",
+                    bounds=bounds,
+                )
+                fit = matern_correlation(pred, *optim_result.x)
+            else:
+                # Univariate covariance, fit covariogram
+                assert len(initial_guess) == 3
+                bounds = [(0.01, 4.0), (xdata[xdata > 0].min(), 1.5e4), (0.0, 1.0)]
+                optim_result = minimize(
+                    wls_cost,
+                    initial_guess,
+                    args=(
+                        xdata.values,
+                        ydata.values,
+                        bin_counts.values,
+                        None,
+                        covariogram,
+                    ),
+                    method="L-BFGS-B",
+                    bounds=bounds,
+                )
+                # fit = matern_vario(xdata, *optim_result.x)
+                fit = matern_cov(pred, *optim_result.x)
     else:
-        # Fit univariate covariance using variogram
+        # Univariate covariance, fit variogram
         assert len(initial_guess) == 3
-        bounds = [(0.01, 10.0), (xdata[xdata > 0].min(), 5e3), (0.0, 10.0)]
+        bounds = [(0.01, 4.0), (xdata[xdata > 0].min(), 1.5e4), (0.0, 1.0)]
         optim_result = minimize(
-            weighted_least_squares,
+            wls_cost,
             initial_guess,
-            args=(xdata.values, ydata.values, bin_counts.values, sigmas),
+            args=(xdata.values, ydata.values, bin_counts.values, None, covariogram),
             method="L-BFGS-B",
             bounds=bounds,
         )
-        fit = matern_vario(xdata, *optim_result.x)
+        fit = matern_vario(pred, *optim_result.x)
 
     if optim_result.success == False:
         warnings.warn("ERROR: optimization did not converge.")
 
-    return optim_result.x, fit
+    return optim_result.x, pd.DataFrame({"lag": pred, "wls_fit": fit})
 
 
 def variogram_analysis(
-    mf, space_lags, tol, cov_guess, cross_guess, crop_lags=0.65, standardize=False,
+    mf,
+    space_lags,
+    tol,
+    cov_guess,
+    cross_guess,
+    crop_lags=0.65,
+    standardize=False,
+    covariograms=True,
+    normalize_cov=False,
 ):
     """
     Compute the empirical spatio-temporal variograms from a multi-field object and find the weighted least squares fit.
@@ -363,47 +468,69 @@ def variogram_analysis(
     time_lag = np.abs(mf.timedelta)
 
     # Standardize locally or remove local mean (i.e., temporal replication)
-    for var in names:
+    for name in names:
         if standardize:
-            data_dict[var][var] = (
-                data_dict[var]
-                .groupby("loc_id")[var]
+            data_dict[name][name] = (
+                data_dict[name]
+                .groupby("loc_id")[name]
                 .transform(lambda x: (x - x.mean()) / x.std())
             )
         else:
-            data_dict[var][var] = (
-                data_dict[var].groupby("loc_id")[var].transform(lambda x: x - x.mean())
+            data_dict[name][name] = (
+                data_dict[name]
+                .groupby("loc_id")[name]
+                .transform(lambda x: x - x.mean())
             )
 
     # Compute and fit variograms and cross-covariogram
     variograms = dict()
     params_fit = dict()
     sigmas = list()
-    for var in names:
+    for name in names:
         # NOTE: no temporal lag in variograms
-        variograms[var] = empirical_variogram(
-            data_dict[var], var, space_lags, tol, 0, crop_lags=crop_lags
+        variograms[name] = empirical_variogram(
+            data_dict[name],
+            name,
+            space_lags,
+            tol,
+            0,
+            crop_lags=crop_lags,
+            covariogram=covariograms,
+            normalize=normalize_cov,
         )
-        params_fit[var], variograms[var]["wls_fit"] = fit_variogram_wls(
-            variograms[var]["lag"],
-            variograms[var][var],
-            variograms[var]["counts"],
+        params_fit[name], df_fit = fit_variogram_wls(
+            variograms[name]["lag"],
+            variograms[name][name],
+            variograms[name]["counts"],
             cov_guess,
+            covariogram=covariograms,
+            normalized=normalize_cov,
         )
-        sigmas.append(params_fit[var][0])
+        variograms[name] = pd.merge(variograms[name], df_fit, on="lag", how="outer")
+        sigmas.append(params_fit[name][0])
 
-    cross_names = [f"{names[0]}:{names[1]}_back", f"{names[0]}:{names[1]}_forward"]
-    variograms[cross_names[0]], variograms[cross_names[1]] = empirical_cross_cov(
-        data_dict, space_lags, tol, time_lag, crop_lags=crop_lags
+    cross_name = f"{names[0]}:{names[1]}"
+    variograms[cross_name] = empirical_cross_cov(
+        data_dict,
+        space_lags,
+        tol,
+        time_lag,
+        crop_lags=crop_lags,
+        normalize=normalize_cov,
     )
-    for cross in cross_names:
-        params_fit[cross], variograms[cross]["wls_fit"] = fit_variogram_wls(
-            variograms[cross]["lag"],
-            variograms[cross][f"{names[0]}:{names[1]}"],
-            variograms[cross]["counts"],
-            cross_guess,
-            sigmas=sigmas,
-        )
+    params_fit[cross_name], df_fit = fit_variogram_wls(
+        variograms[cross_name]["lag"],
+        variograms[cross_name][cross_name],
+        variograms[cross_name]["counts"],
+        cross_guess,
+        sigmas=sigmas,
+        covariogram=True,
+        cross=True,
+        normalized=normalize_cov,
+    )
+    variograms[cross_name] = pd.merge(
+        variograms[cross_name], df_fit, on="lag", how="outer"
+    )
 
     return variograms, params_fit
 

@@ -1,4 +1,6 @@
 # Utilities for reading, writing, and formatting data
+import warnings
+
 import numpy as np
 import pandas as pd
 import xarray
@@ -90,12 +92,14 @@ def read_transcom(path):
 
 
 ## Formatting
-def global_grid(res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
+def global_grid(lon_res, lat_res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
     """Establish longitude and latitude bins and centerpoints on a global grid."""
-    lon_bins = np.arange(lon_lwr, lon_upr + res, res)
-    lat_bins = np.arange(lat_lwr, lat_upr + res, res)
+    lon_bins = np.arange(lon_lwr, lon_upr + lon_res, lon_res)
+    lat_bins = np.arange(lat_lwr, lat_upr + lat_res, lat_res)
     lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
     lat_centers = (lat_bins[1:] + lat_bins[:-1]) / 2
+    if np.any(lon_centers == 0) or np.any(lat_centers == 0):
+        warnings.warn("WARNING: grid may not be considered centered.")
     return {
         "lon_bins": lon_bins,
         "lon_centers": lon_centers,
@@ -104,12 +108,21 @@ def global_grid(res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
     }
 
 
-def regrid(ds, res=1):
+def regrid(
+    ds, lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90
+):
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
     """
     df = ds.to_dataframe().reset_index()
-    grid = global_grid(res)
+    grid = global_grid(
+        lon_res,
+        lat_res,
+        lon_lwr=lon_lwr,
+        lon_upr=lon_upr,
+        lat_lwr=lat_lwr,
+        lat_upr=lat_upr,
+    )
 
     # overwrite lon-lat values with grid values
     df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
@@ -127,7 +140,7 @@ def map_transcom(ds, ds_tc):
     Regrid dataset to 1-degree grid and merge TransCom regions.
     """
     # regrid the dataset to 1-degree
-    df_grid = regrid(ds, res=1).dropna().reset_index()
+    df_grid = regrid(ds, lon_res=1, lat_res=1).dropna().reset_index()
 
     # get transcom
     df_regions = ds_tc.to_dataframe().dropna().reset_index()

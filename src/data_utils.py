@@ -123,7 +123,16 @@ def regrid(
         lat_lwr=lat_lwr,
         lat_upr=lat_upr,
     )
-
+    bounds_check = (
+        lon_lwr <= df.lon.min()
+        and lon_upr >= df.lon.max()
+        and lat_lwr <= df.lat.min()
+        and lat_upr >= df.lat.max()
+    )
+    if not bounds_check:
+        warnings.warn(
+            "WARNING: dataset coordinates not within extents; may produce unexpected behavior."
+        )
     # overwrite lon-lat values with grid values
     df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
         float
@@ -131,7 +140,6 @@ def regrid(
     df["lat"] = pd.cut(df.lat, grid["lat_bins"], labels=grid["lat_centers"]).astype(
         float
     )
-
     return df
 
 

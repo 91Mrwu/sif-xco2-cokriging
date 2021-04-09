@@ -76,20 +76,28 @@ def preprocess_ds(
     return ds_window
 
 
-def land_grid(res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
+def land_grid(lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
     """Collect land locations on a regular grid as an array.
 
     Returns rows with entries [[lat, lon]].
     """
     # establish a fine resolution grid of 0.25 degrees for accuracy
     grid = data_utils.global_grid(
-        0.25, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
+        0.25, 0.25, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
     )
     land = regionmask.defined_regions.natural_earth.land_110
     mask = land.mask(grid["lon_centers"], grid["lat_centers"])
     # regrid to desired resolution and remove non-land areas
     df_mask = (
-        data_utils.regrid(mask, res=res)
+        data_utils.regrid(
+            mask,
+            lon_res=lon_res,
+            lat_res=lat_res,
+            lon_lwr=lon_lwr,
+            lon_upr=lon_upr,
+            lat_lwr=lat_lwr,
+            lat_upr=lat_upr,
+        )
         .dropna(subset=["region"])
         .groupby(["lon", "lat"])
         .mean()

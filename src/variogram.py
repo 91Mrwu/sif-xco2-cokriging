@@ -441,17 +441,16 @@ def fit_variogram_wls(
 
 def check_cauchyshwarz(variograms, names):
     """Check the Cauchy-Shwarz inequality."""
-    n1 = names[0]
-    n2 = names[1]
+    # TODO: double check syntax
+    name1 = names[0]
+    name2 = names[1]
     cross_name = f"{n1}:{n2}"
 
-    s1 = np.sqrt(variograms[n1][variograms[n1]["lag"] == 0][n1][0])
-    s2 = np.sqrt(variograms[n2][variograms[n2]["lag"] == 0][n2][0])
-    cross_cov = np.abs(
-        variograms[cross_name][variograms[cross_name]["lag"] == 0][cross_name][0]
-    )
+    cov1_0 = variograms[name1][variograms[name1]["lag"] == 0][name1][0]
+    cov2_0 = variograms[name2][variograms[name2]["lag"] == 0][name2][0]
+    cross_cov = np.abs(variograms[cross_name][cross_name])**2
 
-    if cross_cov > s1 * s2:
+    if np.any(cross_cov > cov1_0 * cov2_0):
         warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
 
 

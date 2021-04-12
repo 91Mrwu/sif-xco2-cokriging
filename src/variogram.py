@@ -444,7 +444,7 @@ def check_cauchyshwarz(variograms, names):
     # TODO: double check syntax
     name1 = names[0]
     name2 = names[1]
-    cross_name = f"{n1}:{n2}"
+    cross_name = f"{name1}:{name2}"
 
     cov1_0 = variograms[name1][variograms[name1]["lag"] == 0][name1][0]
     cov2_0 = variograms[name2][variograms[name2]["lag"] == 0][name2][0]

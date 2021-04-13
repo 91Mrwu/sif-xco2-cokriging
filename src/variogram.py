@@ -12,7 +12,7 @@ from krige_tools import distance_matrix
 SIG_L = 0.4
 SIG_U = 4.0
 NU_L = 0.2
-NU_U = 0.5
+NU_U = 0.4
 LEN_L = 2e3
 LEN_U = 5e4
 NUG_L = 0.0

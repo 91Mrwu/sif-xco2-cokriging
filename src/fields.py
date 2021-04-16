@@ -28,7 +28,6 @@ class Field:
         ds_prep = krige_tools.preprocess_ds(
             ds.copy(),
             timestamp,
-            timedelta=timedelta,
             full_detrend=full_detrend,
             standardize_window=standardize_window,
         )

@@ -21,12 +21,29 @@ RHO_L = -1.0
 RHO_U = -0.1
 
 
-def crop_lag_vec(lags, dist, frac=0.65):
-    """Crop lag vector from minimum distance to a fraction of the maximum distance and pad with a leading zero."""
-    min_dist = dist[dist > 0.0].min()
-    max_dist = frac * dist.max()
-    lags = lags[(lags >= min_dist) & (lags <= max_dist)]
-    return np.hstack([[0.0], lags])
+# def crop_lag_vec(lags, dist, frac=0.65):
+#     """Crop lag vector from minimum distance to a fraction of the maximum distance and pad with a leading zero."""
+#     min_dist = dist[dist > 0.0].min()
+#     max_dist = frac * dist.max()
+#     lags = lags[(lags >= min_dist) & (lags <= max_dist)]
+#     return np.hstack([[0.0], lags])
+
+
+def construct_variogram_bins(min_dist, max_dist, n_bins):
+    bin_centers = np.linspace(min_dist, max_dist, n_bins)
+    bin_width = bin_centers[1] - bin_centers[0]
+    bin_edges = np.arange(
+        min_dist - 0.5 * bin_width, max_dist + 1.5 * bin_width, bin_width
+    )
+    bin_edges[0] = 0
+    return bin_centers, bin_edges
+
+
+def shift_longitude(coords):
+    """Given an array of [[lat, lon]] in real degrees, add 0.5-degrees to longitude values."""
+    coords_s = np.copy(coords)
+    coords_s[:, 1] = coords_s[:, 1] + 0.5
+    return coords_s
 
 
 def distance_matrix_time(T1, T2, units="M"):
@@ -37,21 +54,18 @@ def distance_matrix_time(T1, T2, units="M"):
 
 
 @njit
-def get_dist_pairs(D, dist, tol=0.0):
-    """Returns indices of pairs within a tolerance of the specified distance from distance matrix D."""
-    # NOTE: to get neg. dists, consider pairs[pairs[:, 0] < pairs[:, 1]] from "directional setting"
-    if dist == 0 or tol == 0:
-        pairs = np.argwhere(D == dist)
-    else:
-        pairs = np.argwhere((D >= dist - tol) & (D <= dist + tol))
+def spatial_pairs(D, bin_edges):
+    """Returns indices of pairs within a given bin."""
+    pairs = np.argwhere((D >= bin_edges[0]) & (D < bin_edges[1]))
     return pairs
 
 
 @njit
-def directional_pairs(D, dist):
-    """Returns backward pairs. For use with temporal distance matrix D."""
-    pairs = get_dist_pairs(D, dist)
-    return pairs[pairs[:, 0] >= pairs[:, 1]]
+def temporal_pairs(D, dist):
+    """Returns backward temporal pairs from temporal distance matrix D."""
+    # With a temporal offset of 'dist' already applied to the data, corrdinates will be along the diagonal.
+    pairs = np.argwhere(D == dist)
+    return pairs[pairs[:, 0] == pairs[:, 1]]
 
 
 @njit
@@ -128,44 +142,45 @@ def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
 
 
 @njit(parallel=True)
-def apply_vario_calc(space_lags, dist_space, tol, pairs_time, data):
+def apply_vario_calc(bin_edges, dist_space, pairs_time, data):
     """For a fixed temporal lag, compute vario calc at all spatial lags in parallel."""
-    v = np.zeros_like(space_lags)
-    counts = np.zeros_like(space_lags)
+    variogram = np.zeros_like(bin_edges[:-1])
+    counts = np.zeros_like(bin_edges[:-1])
 
-    for h in prange(len(v)):  # pylint: disable=not-an-iterable
-        pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
+    for i in prange(len(variogram)):  # pylint: disable=not-an-iterable
+        pairs_space = spatial_pairs(dist_space, [bin_edges[i], bin_edges[i + 1]])
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        v[h], counts[h] = spacetime_vario_calc(data, pairs_time, pairs_space)
+        variogram[i], counts[i] = spacetime_vario_calc(data, pairs_time, pairs_space)
 
-    return v, counts
+    return variogram, counts
 
 
 @njit(parallel=True)
-def apply_xcov_calc(space_lags, dist_space, tol, pairs_time, data1, data2):
+def apply_xcov_calc(bin_edges, dist_space, pairs_time, data1, data2):
     """For a fixed temporal lag, compute cross covariance at all spatial lags in parallel."""
-    v = np.zeros_like(space_lags)
-    counts = np.zeros_like(space_lags)
+    variogram = np.zeros_like(bin_edges[:-1])
+    counts = np.zeros_like(bin_edges[:-1])
 
-    for h in prange(len(v)):  # pylint: disable=not-an-iterable
-        pairs_space = get_dist_pairs(dist_space, space_lags[h], tol=tol)
+    for i in prange(len(variogram)):  # pylint: disable=not-an-iterable
+        pairs_space = spatial_pairs(dist_space, [bin_edges[i], bin_edges[i + 1]])
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        v[h], counts[h] = spacetime_cov_calc(data1, data2, pairs_time, pairs_space)
+        variogram[i], counts[i] = spacetime_cov_calc(
+            data1, data2, pairs_time, pairs_space
+        )
 
-    return v, counts
+    return variogram, counts
 
 
 def empirical_variogram(
     df,
     name,
-    space_lags,
-    tol,
     time_lag,
-    crop_lags=0.65,
+    n_bins=15,
     covariogram=True,
     normalize=False,
+    shift_coords=False,
 ):
     """Basic function to compute a variogram from a dataframe."""
     # Establish space-time domain
@@ -174,30 +189,36 @@ def empirical_variogram(
 
     # Precompute distances
     dist_time = distance_matrix_time(times, times)
-    dist_space = distance_matrix(coords, coords, fast_dist=True)
-    if crop_lags:
-        space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
+    if shift_coords:
+        coords_s = shift_longitude(coords)
+        dist_space = distance_matrix(coords, coords_s, fast_dist=True)
+    else:
+        dist_space = distance_matrix(coords, coords, fast_dist=True)
+    # if crop_lags:
+    #     space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
 
-    assert space_lags[-1] <= dist_space.max()
     assert time_lag <= dist_time.max()
+    bin_centers, bin_edges = construct_variogram_bins(
+        dist_space.min(), 0.65 * dist_space.max(), n_bins
+    )
 
     # Get temporal pairs
-    pairs_time = get_dist_pairs(dist_time, time_lag)
+    pairs_time = temporal_pairs(dist_time, time_lag)
 
     # Format data and variogram dataframe
     data = df[["t_id", "loc_id"] + [name]].values
-    df_vgm = pd.DataFrame({"lag": space_lags})
+    df_vgm = pd.DataFrame({"lag": bin_centers})
 
     # Compute variogram
     if covariogram:
         df_vgm[name], df_vgm["counts"] = apply_xcov_calc(
-            space_lags, dist_space, tol, pairs_time, data, data
+            bin_edges, dist_space, pairs_time, data, data
         )
         if normalize:
             df_vgm[name] = df_vgm[name] / df_vgm[name][0]
     else:
         df_vgm[name], df_vgm["counts"] = apply_vario_calc(
-            space_lags, dist_space, tol, pairs_time, data
+            bin_edges, dist_space, pairs_time, data
         )
     if (df_vgm["counts"] < 30).any():
         warnings.warn(
@@ -208,36 +229,42 @@ def empirical_variogram(
 
 
 def empirical_cross_cov(
-    data_dict, space_lags, tol, time_lag, crop_lags=0.65, normalize=False, sigmas=None
+    data_dict, time_lag, n_bins=15, normalize=False, shift_coords=False, sigmas=None,
 ):
     """Basic function to compute a cross covariogram from a pair of dataframes stored in dict."""
     names = list(data_dict.keys())
+    assert len(names) == 2
+
     # Establish space-time domains
     times = [np.unique(data_dict[name]["time"].values) for name in names]
     coords = [
         np.unique(data_dict[name][["lat", "lon"]].values, axis=0) for name in names
     ]
+    if shift_coords:
+        coords[1] = shift_longitude(coords[1])
 
     # Precompute distances
     dist_time = distance_matrix_time(times[0], times[1])
     dist_space = distance_matrix(coords[0], coords[1], fast_dist=True)
-    if crop_lags:
-        space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
+    # if crop_lags:
+    #     space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
 
-    assert space_lags[-1] <= dist_space.max()
     assert time_lag <= dist_time.max()
+    bin_centers, bin_edges = construct_variogram_bins(
+        dist_space.min(), 0.65 * dist_space.max(), n_bins
+    )
 
     # Get directional temporal pairs (don't assume symmetry)
-    pairs_time = directional_pairs(dist_time, time_lag)
+    pairs_time = temporal_pairs(dist_time, time_lag)
 
     # Format data and variogram dataframe
     data = [data_dict[name][["t_id", "loc_id"] + [name]].values for name in names]
-    df_cov = pd.DataFrame({"lag": space_lags})
+    df_cov = pd.DataFrame({"lag": bin_centers})
 
     # Compute cross-covariograms
     cross_name = f"{names[0]}:{names[1]}"
     df_cov[cross_name], df_cov["counts"] = apply_xcov_calc(
-        space_lags, dist_space, tol, pairs_time, data[0], data[1]
+        bin_edges, dist_space, pairs_time, data[0], data[1]
     )
     if normalize:
         assert sigmas is not None
@@ -441,14 +468,18 @@ def fit_variogram_wls(
 
 def check_cauchyshwarz(variograms, names):
     """Check the Cauchy-Shwarz inequality."""
-    # TODO: double check syntax
     name1 = names[0]
     name2 = names[1]
     cross_name = f"{name1}:{name2}"
 
-    cov1_0 = variograms[name1][variograms[name1]["lag"] == 0][name1][0]
-    cov2_0 = variograms[name2][variograms[name2]["lag"] == 0][name2][0]
-    cross_cov = np.abs(variograms[cross_name][cross_name])**2
+    # NOTE: Not exactly C-S if minimum lag is not 0, but should be close
+    cov1_0 = variograms[name1][
+        variograms[name1]["lag"] == np.min(variograms[name1]["lag"])
+    ][name1][0]
+    cov2_0 = variograms[name2][
+        variograms[name2]["lag"] == np.min(variograms[name2]["lag"])
+    ][name2][0]
+    cross_cov = variograms[cross_name][cross_name] ** 2
 
     if np.any(cross_cov > cov1_0 * cov2_0):
         warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
@@ -456,12 +487,11 @@ def check_cauchyshwarz(variograms, names):
 
 def variogram_analysis(
     mf,
-    space_lags,
-    tol,
     cov_guess,
     cross_guess,
-    crop_lags=0.65,
+    n_bins=15,
     standardize=False,
+    shift_coords=False,
     covariograms=True,
     normalize_cov=False,
 ):
@@ -470,9 +500,9 @@ def variogram_analysis(
 
     Parameters:
         mf: multi-field object
-        space_lags: 1xN array of increasing spatial lags
-        tol: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates; note that this can be seen as a rolling window so depending on the size, some pairs may be repeated in multiple bins
+        tol [deprecated]: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates; note that this can be seen as a rolling window so depending on the size, some pairs may be repeated in multiple bins 
         crop_lags: should spatial lag vector be trimmed to a fraction of the maximum distance, and formatted such that the first non-zero element is at least the minimum distance?
+        n_bins: number of bins into which point pairs are grouped for variogram estimates
         standardize: should each data variable be locally standardized?
         cov_guess: covariance params initial guess for WLS fit; list [sigma, nu, len_scale, nugget]
         cross_guess: cross-cov parmas initial guess for WLS fit; list [nu, len_scale, rho]
@@ -514,12 +544,11 @@ def variogram_analysis(
         variograms[name] = empirical_variogram(
             data_dict[name],
             name,
-            space_lags,
-            tol,
             0,
-            crop_lags=crop_lags,
+            n_bins=n_bins,
             covariogram=covariograms,
             normalize=normalize_cov,
+            shift_coords=shift_coords,
         )
         params_fit[name], df_fit = fit_variogram_wls(
             variograms[name]["lag"],
@@ -536,11 +565,10 @@ def variogram_analysis(
     cross_name = f"{names[0]}:{names[1]}"
     variograms[cross_name] = empirical_cross_cov(
         data_dict,
-        space_lags,
-        tol,
         time_lag,
-        crop_lags=crop_lags,
+        n_bins=n_bins,
         normalize=normalize_cov,
+        shift_coords=shift_coords,
         sigmas=sigmas,
     )
     params_fit[cross_name], df_fit = fit_variogram_wls(

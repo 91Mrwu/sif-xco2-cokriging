@@ -260,26 +260,25 @@ class BivariateMatern:
 
     def empirical_variograms(
         self,
-        cov_guess,
+        cov_guesses,
         cross_guess,
         n_bins=15,
         standardize=False,
         shift_coords=False,
-        covariograms=False,
         normalize_cov=False,
     ):
         """Computes and fits individual variograms and a cross-covariogram. Kernels are updated with fitted parameters."""
-        variograms, params = vgm.variogram_analysis(
+        variograms, covariograms, params = vgm.variogram_analysis(
             self.fields,
-            cov_guess,
+            cov_guesses,
             cross_guess,
             n_bins=n_bins,
             standardize=standardize,
             shift_coords=shift_coords,
-            covariograms=covariograms,
             normalize_cov=normalize_cov,
         )
         self.fields.variograms = variograms
+        self.fields.covariograms = covariograms
 
         # names = [self.fields.field_1.data_name, "", self.fields.field_2.data_name]
         # if self.fields.timedelta < 0:
@@ -289,7 +288,7 @@ class BivariateMatern:
 
         # params_arr = np.hstack([params[name] for name in names])
         # self.set_params(params_arr)
-        return variograms, params
+        return variograms, covariograms, params
 
     def neg_log_lik(self, params, dist_blocks):
         """Computes the (negative) log-likelihood of the supplied parameters."""

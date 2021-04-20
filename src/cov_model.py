@@ -265,7 +265,6 @@ class BivariateMatern:
         n_bins=15,
         standardize=False,
         shift_coords=False,
-        normalize_cov=False,
     ):
         """Computes and fits individual variograms and a cross-covariogram. Kernels are updated with fitted parameters."""
         variograms, covariograms, params = vgm.variogram_analysis(
@@ -275,7 +274,6 @@ class BivariateMatern:
             n_bins=n_bins,
             standardize=standardize,
             shift_coords=shift_coords,
-            normalize_cov=normalize_cov,
         )
         self.fields.variograms = variograms
         self.fields.covariograms = covariograms

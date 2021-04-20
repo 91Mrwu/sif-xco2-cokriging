@@ -9,8 +9,8 @@ from scipy.optimize import curve_fit, minimize
 from krige_tools import distance_matrix
 
 # TODO: establish a variogram class
-SIG_L = 0.4
-SIG_U = 1.5
+SIG_L = 0.1
+SIG_U = 1.0
 NU_L = 0.2
 NU_U = 0.5
 LEN_L = 2e3
@@ -19,14 +19,6 @@ NUG_L = 0.0
 NUG_U = 1.0
 RHO_L = -1.0
 RHO_U = -0.1
-
-
-# def crop_lag_vec(lags, dist, frac=0.65):
-#     """Crop lag vector from minimum distance to a fraction of the maximum distance and pad with a leading zero."""
-#     min_dist = dist[dist > 0.0].min()
-#     max_dist = frac * dist.max()
-#     lags = lags[(lags >= min_dist) & (lags <= max_dist)]
-#     return np.hstack([[0.0], lags])
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -70,14 +62,14 @@ def temporal_pairs(D, dist):
 
 
 @njit
-def spacetime_vario_calc(data, pairs_time, pairs_space):
+def spacetime_var_calc(pairs_time, pairs_space, d1, d2):
     """
-    Computes the squared difference for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
+    Computes the squared difference for each pair of spatial and temporal indices, and returns the mean of non-missing elements. Needs to be computed for each variogram bin.
     
     Parameters:
-        data: Kx3 array with columns {time_id, location_id, values}
         pairs_time: Nx2 array with columns {time_id, time_id}
         pairs_space: Mx2 array with columns {location_id, location_id} 
+        d1, d2: Kx3 arrays with columns {time_id, location_id, values}
     Returns:
         vario: mean of pairwise squared differences
         count: number on non-missing pairs included in calculation
@@ -91,30 +83,30 @@ def spacetime_vario_calc(data, pairs_time, pairs_space):
 
     for i in range(n):  # temporal ids
         for j in range(m):  # spatial ids
-            point1 = (data[:, 0] == pairs_time[i, 0]) & (
-                data[:, 1] == pairs_space[j, 0]
+            point_var1 = (d1[:, 0] == pairs_time[i, 0]) & (
+                d1[:, 1] == pairs_space[j, 0]
             )
-            point2 = (data[:, 0] == pairs_time[i, 1]) & (
-                data[:, 1] == pairs_space[j, 1]
+            point_var2 = (d2[:, 0] == pairs_time[i, 1]) & (
+                d2[:, 1] == pairs_space[j, 1]
             )
-            diff = data[point1] - data[point2]
+            diff = d1[point_var1] - d2[point_var2]
             if diff.size:  # array is not empty, data available at matched points
                 pairs_var[i, j] = (diff[0, 2]) ** 2
             else:
                 pairs_var[i, j] = np.nan
 
-    return np.nanmean(pairs_var), np.count_nonzero(~np.isnan(pairs_var))
+    return 0.5 * np.nanmean(pairs_var), np.count_nonzero(~np.isnan(pairs_var))
 
 
 @njit
-def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
+def spacetime_cov_calc(pairs_time, pairs_space, d1, d2):
     """
-    Computes the product of elements in x1 and x2 for each pair of spatial and temporal indices, and returns the mean of non-missing elements.
+    Computes the product for each pair of spatial and temporal indices, and returns the mean of non-missing elements. Needs to be computed for each variogram bin.
     
     Parameters:
-        d1, d2: Kx3 arrays with columns {time_id, location_id, values}
         pairs_time: Nx2 array with columns {time_id for x1, time_id for x2}
         pairs_space: Mx2 array with columns {location_id for x1, location_id for x2}
+        d1, d2: Kx3 arrays with columns {time_id, location_id, values}
     Returns:
         cov: mean of pairwise products
         count: number on non-missing pairs included in calculation
@@ -143,8 +135,8 @@ def spacetime_cov_calc(d1, d2, pairs_time, pairs_space):
 
 
 @njit(parallel=True)
-def apply_vario_calc(bin_edges, dist_space, pairs_time, data):
-    """For a fixed temporal lag, compute vario calc at all spatial lags in parallel."""
+def apply_bin_calcs(bin_edges, dist_space, pairs_time, data1, data2, covariogram):
+    """For a fixed temporal lag, run (co)variogram calculations for each spatial bin in parallel."""
     variogram = np.zeros(bin_edges.size - 1)
     counts = np.zeros(bin_edges.size - 1)
 
@@ -152,36 +144,20 @@ def apply_vario_calc(bin_edges, dist_space, pairs_time, data):
         pairs_space = spatial_pairs(dist_space, [bin_edges[i], bin_edges[i + 1]])
         if pairs_space.shape[0] == 0:
             print("Degenerate.")
-        variogram[i], counts[i] = spacetime_vario_calc(data, pairs_time, pairs_space)
-
-    return variogram, counts
-
-
-@njit(parallel=True)
-def apply_xcov_calc(bin_edges, dist_space, pairs_time, data1, data2):
-    """For a fixed temporal lag, compute cross covariance at all spatial lags in parallel."""
-    variogram = np.zeros(bin_edges.size - 1)
-    counts = np.zeros(bin_edges.size - 1)
-
-    for i in prange(len(variogram)):  # pylint: disable=not-an-iterable
-        pairs_space = spatial_pairs(dist_space, [bin_edges[i], bin_edges[i + 1]])
-        if pairs_space.shape[0] == 0:
-            print("Degenerate.")
-        variogram[i], counts[i] = spacetime_cov_calc(
-            data1, data2, pairs_time, pairs_space
-        )
+        if covariogram:
+            variogram[i], counts[i] = spacetime_cov_calc(
+                pairs_time, pairs_space, data1, data2
+            )
+        else:
+            variogram[i], counts[i] = spacetime_var_calc(
+                pairs_time, pairs_space, data1, data2
+            )
 
     return variogram, counts
 
 
 def empirical_variogram(
-    df,
-    name,
-    time_lag,
-    n_bins=15,
-    covariogram=True,
-    normalize=False,
-    shift_coords=False,
+    df, name, time_lag, n_bins=15, covariogram=False, shift_coords=False,
 ):
     """Basic function to compute a variogram from a dataframe."""
     # Establish space-time domain
@@ -191,12 +167,9 @@ def empirical_variogram(
     # Precompute distances
     dist_time = distance_matrix_time(times, times)
     if shift_coords:
-        coords_s = shift_longitude(coords)
-        dist_space = distance_matrix(coords, coords_s, fast_dist=True)
+        dist_space = distance_matrix(coords, shift_longitude(coords), fast_dist=True)
     else:
         dist_space = distance_matrix(coords, coords, fast_dist=True)
-    # if crop_lags:
-    #     space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
@@ -208,31 +181,24 @@ def empirical_variogram(
 
     # Format data and variogram dataframe
     data = df[["t_id", "loc_id"] + [name]].values
-    df_vgm = pd.DataFrame({"lag": bin_centers})
+    df_vario = pd.DataFrame({"lag": bin_centers})
 
     # Compute variogram
-    if covariogram:
-        df_vgm[name], df_vgm["counts"] = apply_xcov_calc(
-            bin_edges, dist_space, pairs_time, data, data
-        )
-        if normalize:
-            df_vgm[name] = df_vgm[name] / df_vgm[name][0]
-    else:
-        df_vgm[name], df_vgm["counts"] = apply_vario_calc(
-            bin_edges, dist_space, pairs_time, data
-        )
-    if (df_vgm["counts"] < 30).any():
+    df_vario[name], df_vario["counts"] = apply_bin_calcs(
+        bin_edges, dist_space, pairs_time, data, data, covariogram
+    )
+    if (df_vario["counts"] < 30).any():
         warnings.warn(
             f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
         )
 
-    return df_vgm
+    return df_vario
 
 
-def empirical_cross_cov(
-    data_dict, time_lag, n_bins=15, normalize=False, shift_coords=False, sigmas=None,
+def empirical_cross_variogram(
+    data_dict, time_lag, n_bins=15, covariogram=False, shift_coords=False,
 ):
-    """Basic function to compute a cross covariogram from a pair of dataframes stored in dict."""
+    """Basic function to compute a (co)variogram from a pair of dataframes stored in dict. If dataframes are not identical, this will be a cross (co)variogram."""
     names = list(data_dict.keys())
     assert len(names) == 2
 
@@ -247,8 +213,6 @@ def empirical_cross_cov(
     # Precompute distances
     dist_time = distance_matrix_time(times[0], times[1])
     dist_space = distance_matrix(coords[0], coords[1], fast_dist=True)
-    # if crop_lags:
-    #     space_lags = crop_lag_vec(space_lags, dist_space, frac=crop_lags)
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
@@ -260,22 +224,22 @@ def empirical_cross_cov(
 
     # Format data and variogram dataframe
     data = [data_dict[name][["t_id", "loc_id"] + [name]].values for name in names]
-    df_cov = pd.DataFrame({"lag": bin_centers})
+    df_cross = pd.DataFrame({"lag": bin_centers})
 
-    # Compute cross-covariograms
+    # Compute cross-(co)variogram
     cross_name = f"{names[0]}:{names[1]}"
-    df_cov[cross_name], df_cov["counts"] = apply_xcov_calc(
-        bin_edges, dist_space, pairs_time, data[0], data[1]
+    df_cross[cross_name], df_cross["counts"] = apply_bin_calcs(
+        bin_edges, dist_space, pairs_time, data[0], data[1], covariogram
     )
-    if normalize:
-        assert sigmas is not None
-        df_cov[cross_name] = df_cov[cross_name] / np.prod(sigmas)
-    if (df_cov["counts"] < 30).any():
+    # if normalize:
+    #     assert sigmas is not None
+    #     df_cross[cross_name] = df_cross[cross_name] / np.prod(sigmas)
+    if (df_cross["counts"] < 30).any():
         warnings.warn(
             f"WARNING: Fewer than 30 pairs used for at least one bin in covariogram calculation."
         )
 
-    return df_cov
+    return df_cross
 
 
 # TODO: add ability to `freeze` parameters
@@ -312,6 +276,11 @@ def matern_vario(xdata, sigma, nu, len_scale, nugget):
     return sigma ** 2 * (1 - matern_correlation(xdata, nu, len_scale)) + nugget
 
 
+def matern_cross_vario(xdata, sigmas, nuggets, nu, len_scale, rho):
+    sill = 0.5 * (sigmas[0] ** 2 + sigmas[1] ** 2 + nuggets[0] + nuggets[1])
+    return sill - rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, nu, len_scale)
+
+
 def matern_cov(xdata, sigma, nu, len_scale, nugget):
     cov = sigma ** 2 * matern_correlation(xdata, nu, len_scale)
     cov[xdata == 0] += nugget
@@ -320,10 +289,6 @@ def matern_cov(xdata, sigma, nu, len_scale, nugget):
 
 def matern_cross_cov(xdata, sigmas, nu, len_scale, rho):
     return rho * sigmas[0] * sigmas[1] * matern_correlation(xdata, nu, len_scale)
-
-
-def matern_cross_corr(xdata, nu, len_scale, rho):
-    return rho * matern_correlation(xdata, nu, len_scale)
 
 
 def weighted_least_squares(ydata, yfit, bin_counts):
@@ -338,19 +303,11 @@ def weighted_least_squares(ydata, yfit, bin_counts):
     return np.sum(wls)
 
 
-def wls_cost(params, xdata, ydata, bin_counts, sigmas):
+def wls_cost(params, xdata, ydata, bin_counts, sigmas, nuggets):
     if sigmas is not None:
-        yfit = matern_cross_cov(xdata, sigmas, *params)
+        yfit = matern_cross_vario(xdata, sigmas, nuggets, *params)
     else:
         yfit = matern_vario(xdata, *params)
-    return weighted_least_squares(ydata, yfit, bin_counts)
-
-
-def wls_cost_norm(params, xdata, ydata, bin_counts, cross):
-    if cross:
-        yfit = matern_cross_corr(xdata, *params)
-    else:
-        yfit = matern_correlation(xdata, *params)
     return weighted_least_squares(ydata, yfit, bin_counts)
 
 
@@ -463,7 +420,9 @@ def wls_cost_norm(params, xdata, ydata, bin_counts, cross):
 #     return optim_result.x, pd.DataFrame({"lag": pred, "wls_fit": fit})
 
 
-def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
+def fit_variogram_wls(
+    xdata, ydata, bin_counts, initial_guess, sigmas=None, nuggets=None
+):
     """
     Fit covariance parameters to empirical variogram by weighted least squares (Cressie, 1985).
     
@@ -472,20 +431,20 @@ def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
         ydata: pd.series giving the empirical variogram values to be fitted
         bin_counts: pd.series indicating the number of spatio-temporal point pairs used to calculate each empirical value
         initial_guess: list of parameter starting values given as one of [sigma, nu, len_scale, nugget] or [nu, len_scale, rho]
-        sigmas: list of standard deviations if fitting a cross covariance
+        sigmas: list of standard deviations if fitting a cross (co)variogram
     Returns:
         params: list of parameter values
-        fit: the theoretical (co)variogram fit
+        fit: dataframe containing the theoretical covariance
     """
     pred = np.linspace(0, 1.1 * xdata.max(), 100)
     if sigmas is not None:
-        # Cross covariance, fit cross covariogram
+        # Cross covariance, fit cross-variogram
         assert len(initial_guess) == 3
         bounds = [(NU_L, NU_U), (LEN_L, LEN_U), (RHO_L, RHO_U)]
         optim_result = minimize(
             wls_cost,
             initial_guess,
-            args=(xdata.values, ydata.values, bin_counts.values, sigmas,),
+            args=(xdata.values, ydata.values, bin_counts.values, sigmas, nuggets),
             method="L-BFGS-B",
             bounds=bounds,
         )
@@ -497,7 +456,7 @@ def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
         optim_result = minimize(
             wls_cost,
             initial_guess,
-            args=(xdata.values, ydata.values, bin_counts.values, None),
+            args=(xdata.values, ydata.values, bin_counts.values, None, None),
             method="L-BFGS-B",
             bounds=bounds,
         )
@@ -510,33 +469,27 @@ def fit_variogram_wls(xdata, ydata, bin_counts, initial_guess, sigmas=None):
     return optim_result.x, pd.DataFrame({"lag": pred, "wls_fit": fit})
 
 
-def check_cauchyshwarz(variograms, names):
+def check_cauchyshwarz(covariograms, names):
     """Check the Cauchy-Shwarz inequality."""
     name1 = names[0]
     name2 = names[1]
     cross_name = f"{name1}:{name2}"
 
     # NOTE: Not exactly C-S if minimum lag is not 0, but should be close
-    cov1_0 = variograms[name1][
-        variograms[name1]["lag"] == np.min(variograms[name1]["lag"])
+    cov1_0 = covariograms[name1][
+        covariograms[name1]["lag"] == np.min(covariograms[name1]["lag"])
     ][name1][0]
-    cov2_0 = variograms[name2][
-        variograms[name2]["lag"] == np.min(variograms[name2]["lag"])
+    cov2_0 = covariograms[name2][
+        covariograms[name2]["lag"] == np.min(covariograms[name2]["lag"])
     ][name2][0]
-    cross_cov = variograms[cross_name][cross_name] ** 2
+    cross_cov = covariograms[cross_name][cross_name] ** 2
 
     if np.any(cross_cov > cov1_0 * cov2_0):
         warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
 
 
 def variogram_analysis(
-    mf,
-    cov_guesses,
-    cross_guess,
-    n_bins=15,
-    standardize=False,
-    shift_coords=False,
-    normalize_cov=False,
+    mf, cov_guesses, cross_guess, n_bins=15, standardize=False, shift_coords=False,
 ):
     """
     Compute the empirical spatio-temporal variograms from a multi-field object and find the weighted least squares fit.
@@ -577,12 +530,12 @@ def variogram_analysis(
                 .transform(lambda x: x - x.mean())
             )
 
-    # Compute and fit variograms, covariograms, and cross-covariogram
+    # Compute and fit variograms and covariograms
     variograms = dict()
     covariograms = dict()
     params_fit = dict()
-    sigmas_fit = list()
     sigmas = list()
+    nuggets = list()
     for i, name in enumerate(names):
         # NOTE: no temporal lag in variograms/covariograms
         variograms[name] = empirical_variogram(
@@ -591,7 +544,6 @@ def variogram_analysis(
             0,
             n_bins=n_bins,
             covariogram=False,
-            normalize=normalize_cov,
             shift_coords=shift_coords,
         )
         covariograms[name] = empirical_variogram(
@@ -600,7 +552,6 @@ def variogram_analysis(
             0,
             n_bins=n_bins,
             covariogram=True,
-            normalize=normalize_cov,
             shift_coords=shift_coords,
         )
         params_fit[name], df_fit = fit_variogram_wls(
@@ -609,25 +560,29 @@ def variogram_analysis(
             variograms[name]["counts"],
             cov_guesses[i],
         )
-        sigmas.append(np.sqrt(covariograms[name][name][0]))  # empirical std. dev.
-        sigmas_fit.append(params_fit[name][0])
+        sigmas.append(params_fit[name][0])
+        nuggets.append(params_fit[name][-1])
         covariograms[name] = pd.merge(covariograms[name], df_fit, on="lag", how="outer")
 
+    # Compute and fit cross-variogram and cross-covariogram
     cross_name = f"{names[0]}:{names[1]}"
-    covariograms[cross_name] = empirical_cross_cov(
+    variograms[cross_name] = empirical_cross_variogram(
         data_dict,
         time_lag,
         n_bins=n_bins,
-        normalize=normalize_cov,
+        covariogram=False,
         shift_coords=shift_coords,
-        sigmas=sigmas,
+    )
+    covariograms[cross_name] = empirical_cross_variogram(
+        data_dict, time_lag, n_bins=n_bins, covariogram=True, shift_coords=shift_coords,
     )
     params_fit[cross_name], df_fit = fit_variogram_wls(
-        covariograms[cross_name]["lag"],
-        covariograms[cross_name][cross_name],
-        covariograms[cross_name]["counts"],
+        variograms[cross_name]["lag"],
+        variograms[cross_name][cross_name],
+        variograms[cross_name]["counts"],
         cross_guess,
-        sigmas=sigmas_fit,
+        sigmas=sigmas,
+        nuggets=nuggets,
     )
     covariograms[cross_name] = pd.merge(
         covariograms[cross_name], df_fit, on="lag", how="outer"

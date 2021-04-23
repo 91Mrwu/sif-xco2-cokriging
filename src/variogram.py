@@ -9,16 +9,16 @@ from scipy.optimize import curve_fit, minimize
 from krige_tools import distance_matrix
 
 # TODO: establish a variogram class
-SIG_L = 0.1
-SIG_U = 1.0
-NU_L = 0.2
-NU_U = 0.5
-LEN_L = 2e3
-LEN_U = 5e4
-NUG_L = 0.0
-NUG_U = 1.0
-RHO_L = -1.0
-RHO_U = -0.1
+SIG_L = 0.2
+SIG_U = 4.0
+NU_L = 0.5
+NU_U = 4.5
+LEN_L = 5e2
+LEN_U = 3e4
+NUG_L = 0.01
+NUG_U = 0.5
+RHO_L = -6.0
+RHO_U = -0.01
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -96,6 +96,7 @@ def spacetime_var_calc(pairs_time, pairs_space, d1, d2):
                 pairs_var[i, j] = np.nan
 
     return 0.5 * np.nanmean(pairs_var), np.count_nonzero(~np.isnan(pairs_var))
+    # return np.nanmean(pairs_var), np.count_nonzero(~np.isnan(pairs_var))
 
 
 @njit
@@ -273,7 +274,7 @@ def matern_correlation(xdata, nu, len_scale):
 
 
 def matern_vario(xdata, sigma, nu, len_scale, nugget):
-    return sigma ** 2 * (1 - matern_correlation(xdata, nu, len_scale)) + nugget
+    return sigma ** 2 * (1.0 - matern_correlation(xdata, nu, len_scale)) + nugget
 
 
 def matern_cross_vario(xdata, sigmas, nuggets, nu, len_scale, rho):
@@ -295,7 +296,9 @@ def weighted_least_squares(ydata, yfit, bin_counts):
     zeros = np.argwhere(yfit == 0.0)
     non_zero = np.argwhere(yfit != 0.0)
     wls = np.zeros_like(yfit)
-    wls[zeros] = bin_counts[zeros] * ydata[zeros] ** 2  # NOTE: is this wrong to do?
+    wls[zeros] = (
+        bin_counts[zeros] * ydata[zeros] ** 2
+    )  # NOTE: is this wrong to do? (for variograms with nonzero nugget, it won't even come up)
     wls[non_zero] = (
         bin_counts[non_zero]
         * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
@@ -448,7 +451,8 @@ def fit_variogram_wls(
             method="L-BFGS-B",
             bounds=bounds,
         )
-        fit = matern_cross_cov(pred, sigmas, *optim_result.x)
+        var_fit = matern_cross_vario(pred, sigmas, nuggets, *optim_result.x)
+        cov_fit = matern_cross_cov(pred, sigmas, *optim_result.x)
     else:
         # Univariate covariance, fit variogram
         assert len(initial_guess) == 4
@@ -460,13 +464,18 @@ def fit_variogram_wls(
             method="L-BFGS-B",
             bounds=bounds,
         )
-        fit = matern_cov(pred, *optim_result.x)
+        var_fit = matern_vario(pred, *optim_result.x)
+        cov_fit = matern_cov(pred, *optim_result.x)
 
     if optim_result.success == False:
         print("ERROR: optimization did not converge.")
         warnings.warn("ERROR: optimization did not converge.")
 
-    return optim_result.x, pd.DataFrame({"lag": pred, "wls_fit": fit})
+    return (
+        optim_result.x,
+        pd.DataFrame({"lag": pred, "wls_fit": var_fit}),
+        pd.DataFrame({"lag": pred, "wls_fit": cov_fit}),
+    )
 
 
 def check_cauchyshwarz(covariograms, names):
@@ -554,7 +563,7 @@ def variogram_analysis(
             covariogram=True,
             shift_coords=shift_coords,
         )
-        params_fit[name], df_fit = fit_variogram_wls(
+        params_fit[name], var_fit, cov_fit = fit_variogram_wls(
             variograms[name]["lag"],
             variograms[name][name],
             variograms[name]["counts"],
@@ -562,7 +571,10 @@ def variogram_analysis(
         )
         sigmas.append(params_fit[name][0])
         nuggets.append(params_fit[name][-1])
-        covariograms[name] = pd.merge(covariograms[name], df_fit, on="lag", how="outer")
+        variograms[name] = pd.merge(variograms[name], var_fit, on="lag", how="outer")
+        covariograms[name] = pd.merge(
+            covariograms[name], cov_fit, on="lag", how="outer"
+        )
 
     # Compute and fit cross-variogram and cross-covariogram
     cross_name = f"{names[0]}:{names[1]}"
@@ -576,7 +588,7 @@ def variogram_analysis(
     covariograms[cross_name] = empirical_cross_variogram(
         data_dict, time_lag, n_bins=n_bins, covariogram=True, shift_coords=shift_coords,
     )
-    params_fit[cross_name], df_fit = fit_variogram_wls(
+    params_fit[cross_name], var_fit, cov_fit = fit_variogram_wls(
         variograms[cross_name]["lag"],
         variograms[cross_name][cross_name],
         variograms[cross_name]["counts"],
@@ -584,8 +596,11 @@ def variogram_analysis(
         sigmas=sigmas,
         nuggets=nuggets,
     )
+    variograms[cross_name] = pd.merge(
+        variograms[cross_name], var_fit, on="lag", how="outer"
+    )
     covariograms[cross_name] = pd.merge(
-        covariograms[cross_name], df_fit, on="lag", how="outer"
+        covariograms[cross_name], cov_fit, on="lag", how="outer"
     )
     # TODO: sort out how to handle different data and prediction domains
     # check_cauchyshwarz(variograms, names)

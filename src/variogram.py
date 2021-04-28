@@ -17,7 +17,7 @@ LEN_L = 5e2
 LEN_U = 3e4
 NUG_L = 0.01
 NUG_U = 0.5
-RHO_L = -6.0
+RHO_L = -1.0
 RHO_U = -0.01
 
 
@@ -161,6 +161,7 @@ def empirical_variogram(
     df, name, time_lag, n_bins=15, covariogram=False, shift_coords=False,
 ):
     """Basic function to compute a variogram from a dataframe."""
+    # TODO: we can remove the time_lag arg right?
     # Establish space-time domain
     times = np.unique(df["time"].values)
     coords = np.unique(df[["lat", "lon"]].values, axis=0)
@@ -524,20 +525,18 @@ def variogram_analysis(
     names = list(data_dict.keys())
     time_lag = np.abs(mf.timedelta)
 
-    # Standardize locally or remove local mean (i.e., temporal replication)
-    for name in names:
-        if standardize:
-            data_dict[name][name] = (
-                data_dict[name]
-                .groupby("loc_id")[name]
-                .transform(lambda x: (x - x.mean()) / x.std())
-            )
-        else:
-            data_dict[name][name] = (
-                data_dict[name]
-                .groupby("loc_id")[name]
-                .transform(lambda x: x - x.mean())
-            )
+    # for name in names:
+    #     if standardize:
+    #         # Standardize locally (temporal replication)
+    #         data_dict[name][name] = (
+    #             data_dict[name]
+    #             .groupby("loc_id")[name]
+    #             .transform(lambda x: (x - x.mean()) / x.std())
+    #         )
+    #     # Remove the time-indexed spatial mean
+    #     data_dict[name][name] = (
+    #         data_dict[name].groupby("t_id")[name].transform(lambda x: x - x.mean())
+    #     )
 
     # Compute and fit variograms and covariograms
     variograms = dict()
@@ -546,6 +545,7 @@ def variogram_analysis(
     sigmas = list()
     nuggets = list()
     for i, name in enumerate(names):
+        print(name)
         # NOTE: no temporal lag in variograms/covariograms
         variograms[name] = empirical_variogram(
             data_dict[name],
@@ -578,6 +578,7 @@ def variogram_analysis(
 
     # Compute and fit cross-variogram and cross-covariogram
     cross_name = f"{names[0]}:{names[1]}"
+    print(cross_name)
     variograms[cross_name] = empirical_cross_variogram(
         data_dict,
         time_lag,

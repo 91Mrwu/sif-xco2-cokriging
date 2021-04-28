@@ -48,9 +48,7 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def preprocess_ds(
-    ds, timestamp, full_detrend=False, standardize_window=False
-):
+def preprocess_ds(ds, timestamp, full_detrend=False, standardize_window=False):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = get_field_names(ds)
 
@@ -62,13 +60,16 @@ def preprocess_ds(
     window = get_year_window(timestamp)
     ds_window = ds.sel(time=slice(*window))
 
-    ds_window["mean"] = ds_window[data_name].mean(dim="time")
-    ds_window["std"] = ds_window[data_name].std(dim="time")
+    ds_window["temporal_mean"] = ds_window[data_name].mean(dim="time")
+    ds_window["temporal_std"] = ds_window[data_name].std(dim="time")
 
     if standardize_window:
-        ds_window[data_name] = (ds_window[data_name] - ds_window["mean"]) / ds_window[
-            "std"
-        ]
+        ds_window[data_name] = (
+            ds_window[data_name] - ds_window["temporal_mean"]
+        ) / ds_window["temporal_std"]
+
+    # Temporally-indexed spatial means may not be stationary in time
+    ds_window["spatial_mean"] = ds_window[data_name].mean(dim=["lon", "lat"])
 
     return ds_window
 

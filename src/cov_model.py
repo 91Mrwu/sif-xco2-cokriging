@@ -278,12 +278,6 @@ class BivariateMatern:
         self.fields.variograms = variograms
         self.fields.covariograms = covariograms
 
-        # names = [self.fields.field_1.data_name, "", self.fields.field_2.data_name]
-        # if self.fields.timedelta < 0:
-        #     names[1] = f"{names[0]}:{names[2]}_back"
-        # else:
-        #     names[1] = f"{names[0]}:{names[2]}_forward"
-
         # params_arr = np.hstack([params[name] for name in names])
         # self.set_params(params_arr)
         return variograms, covariograms, params

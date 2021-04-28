@@ -43,9 +43,12 @@ class Field:
         self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
-        self.mean = df["mean"].values
-        self.std = df["std"].values
+        self.temporal_mean = df["temporal_mean"].values
+        self.temporal_std = df["temporal_std"].values
+        self.spatial_mean = np.unique(df["spatial_mean"].values)
         self.variance_estimate = df[self.var_name].values
+
+        assert self.spatial_mean.size == 1
 
     def to_xarray(self):
         """Converts the field to an xarray dataset."""
@@ -65,14 +68,16 @@ class Field:
         """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
         df = (
             self.ds.to_dataframe()
-            .drop(columns=[self.var_name, "mean", "std"])
+            .drop(columns=[self.var_name, "temporal_mean", "temporal_std"])
             .dropna()
             .reset_index()
         )
         # Assign location and time IDs
         df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
         df["t_id"] = df.groupby(["time"]).ngroup()
-        return df
+        # Remove the time-indexed spatial mean
+        df[self.data_name] = df[self.data_name] - df["spatial_mean"]
+        return df.drop(columns="spatial_mean")
 
 
 class MultiField:
@@ -112,7 +117,7 @@ class MultiField:
         )
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
         self.joint_std_inverse = np.float_power(
-            np.hstack((self.field_1.std, self.field_2.std)), -1
+            np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1
         )
 
     def _apply_timedelta(self):

@@ -11,12 +11,12 @@ from krige_tools import distance_matrix
 # TODO: establish a variogram class
 SIG_L = 0.2
 SIG_U = 4.0
-NU_L = 0.5
-NU_U = 4.5
-LEN_L = 5e2
-LEN_U = 3e4
+NU_L = 0.2
+NU_U = 3.5
+LEN_L = 50
+LEN_U = 1e4
 NUG_L = 0.01
-NUG_U = 0.5
+NUG_U = 4.0
 RHO_L = -1.0
 RHO_U = -0.01
 
@@ -175,7 +175,7 @@ def empirical_variogram(
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
-        dist_space.min(), 0.65 * dist_space.max(), n_bins
+        dist_space.min(), 0.5 * dist_space.max(), n_bins
     )
 
     # Get temporal pairs
@@ -218,7 +218,7 @@ def empirical_cross_variogram(
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
-        dist_space.min(), 0.65 * dist_space.max(), n_bins
+        dist_space.min(), 0.5 * dist_space.max(), n_bins
     )
 
     # Get directional temporal pairs (don't assume symmetry)

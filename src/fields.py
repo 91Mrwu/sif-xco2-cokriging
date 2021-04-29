@@ -68,7 +68,15 @@ class Field:
         """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
         df = (
             self.ds.to_dataframe()
-            .drop(columns=[self.var_name, "temporal_mean", "temporal_std"])
+            .drop(
+                columns=[
+                    self.var_name,
+                    "temporal_mean",
+                    "temporal_std",
+                    "spatial_std",
+                    "ols_mean",
+                ]
+            )
             .dropna()
             .reset_index()
         )
@@ -76,7 +84,7 @@ class Field:
         df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
         df["t_id"] = df.groupby(["time"]).ngroup()
         # Remove the time-indexed spatial mean
-        df[self.data_name] = df[self.data_name] - df["spatial_mean"]
+        # df[self.data_name] = df[self.data_name] - df["spatial_mean"]
         return df.drop(columns="spatial_mean")
 
 

@@ -259,12 +259,7 @@ class BivariateMatern:
     #     return self, (vario_obj1, vario_obj2)
 
     def empirical_variograms(
-        self,
-        cov_guesses,
-        cross_guess,
-        n_bins=15,
-        standardize=False,
-        shift_coords=False,
+        self, cov_guesses, cross_guess, n_bins=15, shift_coords=False,
     ):
         """Computes and fits individual variograms and a cross-covariogram. Kernels are updated with fitted parameters."""
         variograms, covariograms, params = vgm.variogram_analysis(
@@ -272,7 +267,6 @@ class BivariateMatern:
             cov_guesses,
             cross_guess,
             n_bins=n_bins,
-            standardize=standardize,
             shift_coords=shift_coords,
         )
         self.fields.variograms = variograms

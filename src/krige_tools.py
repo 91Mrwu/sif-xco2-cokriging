@@ -1,3 +1,4 @@
+import warnings
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -71,68 +72,57 @@ def get_monthly_ols_fits(da):
     return da.groupby("time").map(fit_ols)
 
 
-def custom_std(x):
-    """Computed standard deviation of residuals with OLS mean removed.
-    x: 1-d array representing local time-series
-    """
-    return
-
-
-def preprocess_ds(ds, timestamp, full_detrend=False, standardize_window=False):
+def preprocess_ds(
+    ds,
+    timestamp,
+    full_detrend=False,
+    spatial_mean="constant",
+    scale_fact=None,
+    local_std=False,
+):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = get_field_names(ds)
 
-    # # TODO: get actual trend so it can be added back to field in prediction
-    # if full_detrend:
-    #     ds[data_name], _ = apply_detrend(ds[data_name])
-    # ds[data_name] = (ds[data_name] - ds[data_name].mean(dim=["lon", "lat"])) / ds[
-    #     data_name
-    # ].std(dim=["lon", "lat"])
+    # TODO: get actual trend so it can be added back to field in prediction
+    if full_detrend:
+        ds[data_name], _ = apply_detrend(ds[data_name])
 
     # Subset dataset to year centered on timestamp
     window = get_year_window(timestamp)
     ds_window = ds.sel(time=slice(*window))
 
-    # Fit time indexed spatial mean by OLS
-    ds_window["ols_mean"] = get_monthly_ols_fits(ds_window[data_name])
-    ds_window[data_name] = ds_window[data_name] - ds_window["ols_mean"]
+    if scale_fact:
+        ds_window[data_name] = ds_window[data_name] / scale_fact
 
-    # Divide by custom standard dev. to standardize
-    custom_std = lambda x: np.sqrt(np.nanmean(x ** 2, axis=-1))
-    ds_window["ols_resid_std"] = xr.apply_ufunc(
-        custom_std,
-        ds_window[data_name],
-        input_core_dims=[["time"]],
-        output_core_dims=[[]],
-    )
-    ds_window[data_name] = ds_window[data_name] / ds_window["ols_resid_std"]
+    if spatial_mean == "constant":
+        # Time indexed constant spatial mean
+        ds_window["spatial_mean"] = ds_window[data_name].mean(dim=["lon", "lat"])
+    elif spatial_mean == "ols":
+        # Fit time indexed spatial mean by OLS
+        ds_window["spatial_mean"] = get_monthly_ols_fits(ds_window[data_name])
+    else:
+        warnings.warn("ERROR: spatial mean must be `constant` or `ols`.")
+    ds_window[data_name] = ds_window[data_name] - ds_window["spatial_mean"]
 
-    ds_window["temporal_mean"] = ds_window[data_name].mean(dim="time")
-    ds_window["temporal_std"] = ds_window[data_name].std(dim="time")
+    if local_std:
+        # Divide by custom standard dev. to rescale locally
+        custom_std = lambda x: np.sqrt(np.nanmean(x ** 2, axis=-1))
+        ds_window["local_std"] = xr.apply_ufunc(
+            custom_std,
+            ds_window[data_name],
+            input_core_dims=[["time"]],
+            output_core_dims=[[]],
+        )
+        ds_window[data_name] = ds_window[data_name] / ds_window["local_std"]
 
-    # Temporally-indexed spatial means may not be stationary in time
-    ds_window["spatial_mean"] = ds_window[data_name].mean(dim=["lon", "lat"])
-    ds_window["spatial_std"] = ds_window[data_name].std(dim=["lon", "lat"])
+    # ds_window["temporal_mean"] = ds_window[data_name].mean(dim="time")
+    # ds_window["temporal_std"] = ds_window[data_name].std(dim="time")
+    # ds_window[data_name] = (
+    #         ds_window[data_name] - ds_window["temporal_mean"]
+    #     ) / ds_window["temporal_std"]
 
-    if standardize_window:
-        pass
-        # ds_window[data_name] = (
-        #     ds_window[data_name] - ds_window["temporal_mean"]
-        # ) / ds_window["temporal_std"]
-        # ds_window[data_name] = (
-        #     ds_window[data_name] - ds_window["spatial_mean"]
-        # ) / ds_window["spatial_std"]
-        # ds_window[data_name] = (
-        #     ds_window[data_name] - ds_window[data_name].mean()
-        # ) / ds_window[data_name].std()
-
-    # if standardize_window:
-    #     ds_window[data_name] = ds_window[data_name] / ds_window["spatial_std"]
-
-    # # Temporally-indexed spatial means may not be stationary in time
-    # ds_window["spatial_mean"] = ds_window[data_name].mean(dim=["lon", "lat"])
-
-    return ds_window
+    # Remove outliers and return
+    return ds_window.where(np.abs(ds_window[data_name]) <= 3)
 
 
 def land_grid(lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):

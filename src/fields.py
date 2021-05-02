@@ -19,7 +19,9 @@ class Field:
         timestamp,
         timedelta=0.0,
         full_detrend=False,
-        standardize_window=False,
+        spatial_mean="constant",
+        scale_fact=None,
+        local_std=False,
     ):
         self.timestamp = timestamp
         self.timedelta = timedelta
@@ -29,11 +31,10 @@ class Field:
             ds.copy(),
             timestamp,
             full_detrend=full_detrend,
-            standardize_window=standardize_window,
+            spatial_mean=spatial_mean,
+            scale_fact=scale_fact,
+            local_std=local_std,
         )
-        # TODO: add flags for types of transformations applied
-        # TODO: is it possible to investigate the assumption of unbiased error?
-
         df = (
             ds_prep.sel(time=timestamp)
             .to_dataframe()
@@ -43,12 +44,10 @@ class Field:
         self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
-        self.temporal_mean = df["temporal_mean"].values
-        self.temporal_std = df["temporal_std"].values
-        self.spatial_mean = np.unique(df["spatial_mean"].values)
+        # self.temporal_mean = df["temporal_mean"].values
+        # self.temporal_std = df["temporal_std"].values
+        self.spatial_mean = df["spatial_mean"].values
         self.variance_estimate = df[self.var_name].values
-
-        assert self.spatial_mean.size == 1
 
     def to_xarray(self):
         """Converts the field to an xarray dataset."""
@@ -66,26 +65,12 @@ class Field:
 
     def get_spacetime_df(self):
         """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
-        df = (
-            self.ds.to_dataframe()
-            .drop(
-                columns=[
-                    self.var_name,
-                    "temporal_mean",
-                    "temporal_std",
-                    "spatial_std",
-                    "ols_mean",
-                ]
-            )
-            .dropna()
-            .reset_index()
-        )
+        # NOTE: assumes data is already mean-zero
+        df = self.ds[self.data_name].to_dataframe().dropna().reset_index()
         # Assign location and time IDs
         df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
         df["t_id"] = df.groupby(["time"]).ngroup()
-        # Remove the time-indexed spatial mean
-        # df[self.data_name] = df[self.data_name] - df["spatial_mean"]
-        return df.drop(columns="spatial_mean")
+        return df
 
 
 class MultiField:
@@ -100,7 +85,9 @@ class MultiField:
         timestamp,
         timedelta=0,
         full_detrend=False,
-        standardize_window=False,
+        spatial_mean="constant",
+        scale_facts=[None, None],
+        local_std=False,
         dist_units="km",
         fast_dist=False,
     ):
@@ -114,19 +101,23 @@ class MultiField:
             ds_1,
             timestamp,
             full_detrend=full_detrend,
-            standardize_window=standardize_window,
+            spatial_mean=spatial_mean,
+            scale_fact=scale_facts[0],
+            local_std=local_std,
         )
         self.field_2 = Field(
             ds_2,
             self._apply_timedelta(),
             timedelta=timedelta,
             full_detrend=full_detrend,
-            standardize_window=standardize_window,
+            spatial_mean=spatial_mean,
+            scale_fact=scale_facts[1],
+            local_std=local_std,
         )
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
-        self.joint_std_inverse = np.float_power(
-            np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1
-        )
+        # self.joint_std_inverse = np.float_power(
+        #     np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1
+        # )
 
     def _apply_timedelta(self):
         """Returns timestamp with months offset by timedelta as string."""

@@ -10,15 +10,15 @@ from krige_tools import distance_matrix
 
 # TODO: establish a variogram class
 SIG_L = 0.2
-SIG_U = 4.0
+SIG_U = 0.9
 NU_L = 0.2
 NU_U = 3.5
-LEN_L = 50
-LEN_U = 1e4
-NUG_L = 0.01
-NUG_U = 4.0
+LEN_L = 500
+LEN_U = 1e3
+NUG_L = 0.35
+NUG_U = 0.8
 RHO_L = -1.0
-RHO_U = -0.01
+RHO_U = -0.7
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -158,7 +158,13 @@ def apply_bin_calcs(bin_edges, dist_space, pairs_time, data1, data2, covariogram
 
 
 def empirical_variogram(
-    df, name, time_lag, n_bins=15, covariogram=False, shift_coords=False,
+    df,
+    name,
+    time_lag,
+    n_bins=15,
+    covariogram=False,
+    shift_coords=False,
+    fast_dist=False,
 ):
     """Basic function to compute a variogram from a dataframe."""
     # TODO: we can remove the time_lag arg right?
@@ -169,13 +175,15 @@ def empirical_variogram(
     # Precompute distances
     dist_time = distance_matrix_time(times, times)
     if shift_coords:
-        dist_space = distance_matrix(coords, shift_longitude(coords), fast_dist=True)
+        dist_space = distance_matrix(
+            coords, shift_longitude(coords), fast_dist=fast_dist
+        )
     else:
-        dist_space = distance_matrix(coords, coords, fast_dist=True)
+        dist_space = distance_matrix(coords, coords, fast_dist=fast_dist)
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
-        dist_space.min(), 0.5 * dist_space.max(), n_bins
+        dist_space.min(), 0.6 * dist_space.max(), n_bins
     )
 
     # Get temporal pairs
@@ -198,7 +206,12 @@ def empirical_variogram(
 
 
 def empirical_cross_variogram(
-    data_dict, time_lag, n_bins=15, covariogram=False, shift_coords=False,
+    data_dict,
+    time_lag,
+    n_bins=15,
+    covariogram=False,
+    shift_coords=False,
+    fast_dist=False,
 ):
     """Basic function to compute a (co)variogram from a pair of dataframes stored in dict. If dataframes are not identical, this will be a cross (co)variogram."""
     names = list(data_dict.keys())
@@ -214,11 +227,11 @@ def empirical_cross_variogram(
 
     # Precompute distances
     dist_time = distance_matrix_time(times[0], times[1])
-    dist_space = distance_matrix(coords[0], coords[1], fast_dist=True)
+    dist_space = distance_matrix(coords[0], coords[1], fast_dist=fast_dist)
 
     assert time_lag <= dist_time.max()
     bin_centers, bin_edges = construct_variogram_bins(
-        dist_space.min(), 0.5 * dist_space.max(), n_bins
+        dist_space.min(), 0.6 * dist_space.max(), n_bins
     )
 
     # Get directional temporal pairs (don't assume symmetry)
@@ -499,10 +512,11 @@ def check_cauchyshwarz(covariograms, names):
 
 
 def variogram_analysis(
-    mf, cov_guesses, cross_guess, n_bins=15, standardize=False, shift_coords=False,
+    mf, cov_guesses, cross_guess, n_bins=15, shift_coords=False,
 ):
     """
     Compute the empirical spatio-temporal variograms from a multi-field object and find the weighted least squares fit.
+    NOTE: data must have the same scale and time-indexed spatial mean is assumed to be zero
 
     Parameters:
         mf: multi-field object
@@ -511,7 +525,6 @@ def variogram_analysis(
         tol [deprecated]: radius of the spatial neighborhood into which data point pairs are grouped for semivariance estimates; note that this can be seen as a rolling window so depending on the size, some pairs may be repeated in multiple bins 
         crop_lags [deprecated]: should spatial lag vector be trimmed to a fraction of the maximum distance, and formatted such that the first non-zero element is at least the minimum distance?
         n_bins: number of bins into which point pairs are grouped for variogram estimates
-        standardize: should each data variable be locally standardized?
 
     Returns:
         variograms: dictionary containing variogram and cross-covariogram dataframes 
@@ -554,6 +567,7 @@ def variogram_analysis(
             n_bins=n_bins,
             covariogram=False,
             shift_coords=shift_coords,
+            fast_dist=mf.fast_dist,
         )
         covariograms[name] = empirical_variogram(
             data_dict[name],
@@ -562,6 +576,7 @@ def variogram_analysis(
             n_bins=n_bins,
             covariogram=True,
             shift_coords=shift_coords,
+            fast_dist=mf.fast_dist,
         )
         params_fit[name], var_fit, cov_fit = fit_variogram_wls(
             variograms[name]["lag"],
@@ -585,9 +600,15 @@ def variogram_analysis(
         n_bins=n_bins,
         covariogram=False,
         shift_coords=shift_coords,
+        fast_dist=mf.fast_dist,
     )
     covariograms[cross_name] = empirical_cross_variogram(
-        data_dict, time_lag, n_bins=n_bins, covariogram=True, shift_coords=shift_coords,
+        data_dict,
+        time_lag,
+        n_bins=n_bins,
+        covariogram=True,
+        shift_coords=shift_coords,
+        fast_dist=mf.fast_dist,
     )
     params_fit[cross_name], var_fit, cov_fit = fit_variogram_wls(
         variograms[cross_name]["lag"],

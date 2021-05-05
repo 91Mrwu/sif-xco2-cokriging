@@ -27,6 +27,31 @@ def apply_count(da):
 
 
 ## Trend fitting
+def simple_linear_regression(x):
+    """
+    Fit and predict a trend from a vector with indices as the covariate. Return the trend vector.
+    Inputs:
+        x: 1-d numpy array
+    Outputs:
+        pred: 1-d numpy array
+    """
+    if np.isnan(x).all():
+        return x
+    else:
+        # obtain covariate from array indices
+        data = np.stack([np.arange(x.size), x])
+        data = data[:, ~np.isnan(data).any(axis=0)]
+
+        # fit model and predict at non-missing elements
+        X = data[0, :].reshape(-1, 1)
+        y = data[1, :]
+        model = LinearRegression().fit(X, y)
+
+        pred = np.copy(x)
+        pred[~np.isnan(pred)] = model.predict(X)
+        return pred
+
+
 def detrend(x):
     """
     Fit and remove a trend from a vector with indices as the covariate. Return the detrended vector and the slope of the trend seperately.
@@ -35,6 +60,8 @@ def detrend(x):
     Outputs:
         - slope: float
         - z: 1-d numpy array
+
+    NOTE: if we don't use the coeficient for anything, just make this function a wrapper for SLR above
     """
     if np.isnan(x).all():
         return x, np.nan

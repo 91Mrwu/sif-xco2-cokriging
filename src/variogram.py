@@ -77,10 +77,10 @@ def empirical_variogram(dist, values1, values2=None, n_bins=20, covariogram=Fals
         .rename(columns={"mean": "bin_mean"})
         .reset_index()
     )
-    if (df["count"] < 30).any():
-        warnings.warn(
-            f"WARNING: Fewer than 30 pairs used for at least one bin in covariogram calculation."
-        )
+    # if (df["count"] < 30).any():
+    #     warnings.warn(
+    #         f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+    #     )
     return df
 
 

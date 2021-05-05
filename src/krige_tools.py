@@ -1,6 +1,4 @@
 import warnings
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 
 from numba import njit
 import numpy as np
@@ -13,34 +11,8 @@ from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
 from sklearn.linear_model import LinearRegression
 
-from stat_tools import apply_detrend
 import data_utils
-
-
-def get_year_window(timestamp):
-    """Given the month to center on, return the first and last month in the window as a list."""
-    center_time = datetime.strptime(timestamp, "%Y-%m-%d")
-    window = [
-        center_time - relativedelta(months=5),
-        center_time + relativedelta(months=6),
-    ]
-    return tuple([w.strftime("%Y-%m-%d") for w in window])
-
-
-def get_date_range_offset(df, vars, year, offset):
-    """Select a year of data for both variables, with the second variable lagged by the offset."""
-    df["time"] = pd.to_datetime(df["time"])
-    start_date = datetime.fromisoformat(f"{year}-01-01")
-    mask = (df["time"] >= start_date) & (
-        df["time"] < start_date + relativedelta(years=1)
-    )
-    mask_offset = (df["time"] >= start_date - relativedelta(months=offset)) & (
-        df["time"] < start_date + relativedelta(months=12 - offset)
-    )
-    df_var1 = df[mask].drop(vars[1], axis=1)
-    df_var2 = df[mask_offset].drop(vars[0], axis=1)
-    df_offset = pd.merge(df_var1, df_var2, how="outer", on=["lat", "lon", "time"])
-    return df_offset
+from stat_tools import apply_detrend
 
 
 def get_field_names(ds):
@@ -68,8 +40,8 @@ def fit_ols(da):
         )
 
 
-def get_monthly_ols_fits(da):
-    return da.groupby("time").map(fit_ols)
+# def get_monthly_ols_fits(da):
+#     return da.groupby("time").map(fit_ols)
 
 
 def preprocess_ds(
@@ -78,7 +50,7 @@ def preprocess_ds(
     full_detrend=False,
     spatial_mean="constant",
     scale_fact=None,
-    local_std=False,
+    spatial_std=False,
 ):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = get_field_names(ds)
@@ -87,42 +59,47 @@ def preprocess_ds(
     if full_detrend:
         ds[data_name], _ = apply_detrend(ds[data_name])
 
-    # Subset dataset to year centered on timestamp
-    window = get_year_window(timestamp)
-    ds_window = ds.sel(time=slice(*window))
+    # Select data at timestamp only
+    ds_field = ds.sel(time=timestamp)
 
     if scale_fact:
-        ds_window[data_name] = ds_window[data_name] / scale_fact
+        ds_field[data_name] = ds_field[data_name] / scale_fact
 
     if spatial_mean == "constant":
         # Time indexed constant spatial mean
-        ds_window["spatial_mean"] = ds_window[data_name].mean(dim=["lon", "lat"])
+        ds_field["spatial_mean"] = ds_field[data_name].mean()
     elif spatial_mean == "ols":
         # Fit time indexed spatial mean by OLS
-        ds_window["spatial_mean"] = get_monthly_ols_fits(ds_window[data_name])
+        ds_field["spatial_mean"] = fit_ols(ds_field[data_name])
     else:
         warnings.warn("ERROR: spatial mean must be `constant` or `ols`.")
-    ds_window[data_name] = ds_window[data_name] - ds_window["spatial_mean"]
+    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
 
-    if local_std:
-        # Divide by custom standard dev. to rescale locally
-        custom_std = lambda x: np.sqrt(np.nanmean(x ** 2, axis=-1))
-        ds_window["local_std"] = xr.apply_ufunc(
-            custom_std,
-            ds_window[data_name],
-            input_core_dims=[["time"]],
-            output_core_dims=[[]],
-        )
-        ds_window[data_name] = ds_window[data_name] / ds_window["local_std"]
+    if spatial_std:
+        # Divide by custom standard dev. calculated from residuals at all spatial locations
+        custom_std = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
+        ds_field[data_name] = ds_field[data_name] / custom_std
 
-    # ds_window["temporal_mean"] = ds_window[data_name].mean(dim="time")
-    # ds_window["temporal_std"] = ds_window[data_name].std(dim="time")
-    # ds_window[data_name] = (
-    #         ds_window[data_name] - ds_window["temporal_mean"]
-    #     ) / ds_window["temporal_std"]
+    # if local_std:
+    #     # Divide by custom standard dev. calculated from each of the identical months to rescale locally
+    #     # NOTE: this would be more appropriate / feasible if we're working with all identical months anyway [save for later]
+    #     custom_std = lambda x: np.sqrt(np.nanmean(x ** 2, axis=-1))
+    #     ds_field["local_std"] = xr.apply_ufunc(
+    #         custom_std,
+    #         ds_field[data_name], # NOTE: this will need to be the dataset of months = m
+    #         input_core_dims=[["time"]],
+    #         output_core_dims=[[]],
+    #     )
+    #     ds_field[data_name] = ds_field[data_name] / ds_field["local_std"]
+
+    # ds_field["temporal_mean"] = ds_field[data_name].mean(dim="time")
+    # ds_field["temporal_std"] = ds_field[data_name].std(dim="time")
+    # ds_field[data_name] = (
+    #         ds_field[data_name] - ds_field["temporal_mean"]
+    #     ) / ds_field["temporal_std"]
 
     # Remove outliers and return
-    return ds_window.where(np.abs(ds_window[data_name]) <= 3)
+    return ds_field.where(np.abs(ds_field[data_name]) <= 3)
 
 
 def land_grid(lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
@@ -185,24 +162,24 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
 
 
-def match_data_locations(field_1, field_2):
-    """Only keep data at shared locations"""
-    df_1 = pd.DataFrame(
-        {
-            "lat": field_1.coords[:, 0],
-            "lon": field_1.coords[:, 1],
-            "values": field_1.values,
-        }
-    )
-    df_2 = pd.DataFrame(
-        {
-            "lat": field_2.coords[:, 0],
-            "lon": field_2.coords[:, 1],
-            "values": field_2.values,
-        }
-    )
-    df = pd.merge(df_1, df_2, on=["lat", "lon"], suffixes=("_1", "_2"))
-    return df.values_1, df.values_2
+# def match_data_locations(field_1, field_2):
+#     """Only keep data at shared locations"""
+#     df_1 = pd.DataFrame(
+#         {
+#             "lat": field_1.coords[:, 0],
+#             "lon": field_1.coords[:, 1],
+#             "values": field_1.values,
+#         }
+#     )
+#     df_2 = pd.DataFrame(
+#         {
+#             "lat": field_2.coords[:, 0],
+#             "lon": field_2.coords[:, 1],
+#             "values": field_2.values,
+#         }
+#     )
+#     df = pd.merge(df_1, df_2, on=["lat", "lon"], suffixes=("_1", "_2"))
+#     return df.values_1, df.values_2
 
 
 # TODO: test whether numba is actually faster here using toy arrays

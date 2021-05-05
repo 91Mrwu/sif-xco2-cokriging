@@ -21,31 +21,25 @@ class Field:
         full_detrend=False,
         spatial_mean="constant",
         scale_fact=None,
-        local_std=False,
+        spatial_std=False,
     ):
         self.timestamp = timestamp
         self.timedelta = timedelta
 
         self.data_name, self.var_name = krige_tools.get_field_names(ds)
+        # NOTE: ds_prep should be a spatial only dataset
         ds_prep = krige_tools.preprocess_ds(
             ds.copy(),
             timestamp,
             full_detrend=full_detrend,
             spatial_mean=spatial_mean,
             scale_fact=scale_fact,
-            local_std=local_std,
+            spatial_std=spatial_std,
         )
-        df = (
-            ds_prep.sel(time=timestamp)
-            .to_dataframe()
-            .reset_index()
-            .dropna(subset=[self.data_name])
-        )
+        df = ds_prep.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
-        # self.temporal_mean = df["temporal_mean"].values
-        # self.temporal_std = df["temporal_std"].values
         self.spatial_mean = df["spatial_mean"].values
         self.variance_estimate = df[self.var_name].values
 
@@ -63,14 +57,28 @@ class Field:
             .to_xarray()
         )
 
-    def get_spacetime_df(self):
-        """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
-        # NOTE: assumes data is already mean-zero
-        df = self.ds[self.data_name].to_dataframe().dropna().reset_index()
-        # Assign location and time IDs
-        df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
-        df["t_id"] = df.groupby(["time"]).ngroup()
-        return df
+    # def get_spatial_df(self):
+    #     """Converts the spatial dataset associated with the timestamp to a data frame with location ids."""
+    #     # NOTE: assumes data is already mean-zero
+    #     df = (
+    #         self.ds[self.data_name]
+    #         .to_dataframe()
+    #         .drop(columns="time")
+    #         .dropna()
+    #         .reset_index()
+    #     )
+    #     # Assign location and time IDs
+    #     df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
+    #     return df
+
+    # def get_spacetime_df(self):
+    #     """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
+    #     # NOTE: assumes data is already mean-zero
+    #     df = self.ds[self.data_name].to_dataframe().dropna().reset_index()
+    #     # Assign location and time IDs
+    #     df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
+    #     df["t_id"] = df.groupby(["time"]).ngroup()
+    #     return df
 
 
 class MultiField:
@@ -87,11 +95,11 @@ class MultiField:
         full_detrend=False,
         spatial_mean="constant",
         scale_facts=[None, None],
-        local_std=False,
+        spatial_std=False,
         dist_units="km",
         fast_dist=False,
     ):
-        self.timestamp = timestamp
+        self.timestamp = np.datetime_as_string(timestamp, unit="D")
         self.timedelta = timedelta
         self.dist_units = dist_units
         self.fast_dist = fast_dist
@@ -103,7 +111,7 @@ class MultiField:
             full_detrend=full_detrend,
             spatial_mean=spatial_mean,
             scale_fact=scale_facts[0],
-            local_std=local_std,
+            spatial_std=spatial_std,
         )
         self.field_2 = Field(
             ds_2,
@@ -112,7 +120,7 @@ class MultiField:
             full_detrend=full_detrend,
             spatial_mean=spatial_mean,
             scale_fact=scale_facts[1],
-            local_std=local_std,
+            spatial_std=spatial_std,
         )
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
         # self.joint_std_inverse = np.float_power(
@@ -120,7 +128,7 @@ class MultiField:
         # )
 
     def _apply_timedelta(self):
-        """Returns timestamp with months offset by timedelta as string."""
+        """Returns timestamp with month offset by timedelta as string."""
         t0 = datetime.strptime(self.timestamp, "%Y-%m-%d")
         return (t0 + relativedelta(months=self.timedelta)).strftime("%Y-%m-%d")
 

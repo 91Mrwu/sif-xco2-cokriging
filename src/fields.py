@@ -6,6 +6,54 @@ import pandas as pd
 import xarray as xr
 
 import krige_tools
+from variogram import shift_longitude, empirical_variogram
+
+
+def get_scale_factor(ds, data_name):
+    """Computes the initial univariate semivariograms, and returns the square root of each semivariogram value based on the most pairs around a lag of 1000 km."""
+    # Compute the semivariogram
+    df = ds[data_name].to_dataframe().reset_index().dropna(subset=[data_name])
+    values = df[data_name].values
+    coords = df[["lat", "lon"]].values
+
+    if values.size == 0:
+        return np.nan
+
+    dist = krige_tools.distance_matrix(coords, shift_longitude(coords), fast_dist=True)
+    df_vgm = empirical_variogram(dist, values, n_bins=50, covariogram=False)
+
+    # Get the root of the value which uses the most pairs around lag 1000 km
+    return np.sqrt(
+        df_vgm[df_vgm["bin_center"].between(900, 1100)]
+        .sort_values("count", ascending=False)["bin_mean"]
+        .values[0]
+    )
+
+
+def preprocess_ds(ds, timestamp):
+    """Apply data transformations and compute surface mean and standard deviation."""
+    data_name, var_name = krige_tools.get_field_names(ds)
+
+    # TODO: save actual trend so it can be added back to field in prediction
+    ds[data_name] = krige_tools.remove_linear_trend(ds[data_name])
+
+    # Select data at timestamp only
+    ds_field = ds.sel(time=timestamp)
+
+    # Remove the OLS mean surface
+    ds_field["spatial_mean"] = krige_tools.fit_ols(ds_field, data_name)
+    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
+
+    # Rescale the data
+    ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
+    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+
+    # # Divide by custom standard dev. calculated from residuals at all spatial locations
+    # resid_std = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
+    # ds_field[data_name] = ds_field[data_name] / resid_std
+
+    # Remove outliers and return
+    return ds_field.where(np.abs(ds_field[data_name]) <= 3)
 
 
 class Field:
@@ -13,34 +61,16 @@ class Field:
     Stores data values and coordinates for a single process at a fixed time in a data frame.
     """
 
-    def __init__(
-        self,
-        ds,
-        timestamp,
-        timedelta=0.0,
-        full_detrend=False,
-        spatial_mean="constant",
-        scale_fact=None,
-        spatial_std=False,
-    ):
+    def __init__(self, ds, timestamp):
         self.timestamp = timestamp
-        self.timedelta = timedelta
-
         self.data_name, self.var_name = krige_tools.get_field_names(ds)
-        # NOTE: ds_prep should be a spatial only dataset
-        ds_prep = krige_tools.preprocess_ds(
-            ds.copy(),
-            timestamp,
-            full_detrend=full_detrend,
-            spatial_mean=spatial_mean,
-            scale_fact=scale_fact,
-            spatial_std=spatial_std,
-        )
+        ds_prep = preprocess_ds(ds.copy(), timestamp)
         df = ds_prep.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
         self.spatial_mean = df["spatial_mean"].values
+        self.scale_fact = ds_prep.attrs["scale_fact"]
         self.variance_estimate = df[self.var_name].values
 
     def to_xarray(self):
@@ -87,17 +117,7 @@ class MultiField:
     """
 
     def __init__(
-        self,
-        ds_1,
-        ds_2,
-        timestamp,
-        timedelta=0,
-        full_detrend=False,
-        spatial_mean="constant",
-        scale_facts=[None, None],
-        spatial_std=False,
-        dist_units="km",
-        fast_dist=False,
+        self, ds_1, ds_2, timestamp, timedelta=0, dist_units="km", fast_dist=False,
     ):
         self.timestamp = np.datetime_as_string(timestamp, unit="D")
         self.timedelta = timedelta
@@ -105,23 +125,8 @@ class MultiField:
         self.fast_dist = fast_dist
         self.ds_1 = ds_1
         self.ds_2 = ds_2
-        self.field_1 = Field(
-            ds_1,
-            timestamp,
-            full_detrend=full_detrend,
-            spatial_mean=spatial_mean,
-            scale_fact=scale_facts[0],
-            spatial_std=spatial_std,
-        )
-        self.field_2 = Field(
-            ds_2,
-            self._apply_timedelta(),
-            timedelta=timedelta,
-            full_detrend=full_detrend,
-            spatial_mean=spatial_mean,
-            scale_fact=scale_facts[1],
-            spatial_std=spatial_std,
-        )
+        self.field_1 = Field(ds_1, timestamp)
+        self.field_2 = Field(ds_2, self._apply_timedelta())
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
         # self.joint_std_inverse = np.float_power(
         #     np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1

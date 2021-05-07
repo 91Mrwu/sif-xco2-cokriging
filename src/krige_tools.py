@@ -10,9 +10,10 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
 from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
 
 import data_utils
-from stat_tools import simple_linear_regression, apply_detrend
+from stat_tools import simple_linear_regression
 
 
 def get_field_names(ds):
@@ -22,7 +23,7 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def remove_spatial_trend(da):
+def remove_linear_trend(da):
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
     x = da.mean(dim=["lat", "lon"])
     trend = simple_linear_regression(x.values)
@@ -30,85 +31,25 @@ def remove_spatial_trend(da):
     return da - da_trend
 
 
-def fit_ols(da):
+def fit_ols(ds, data_name):
     """Estimate the mean surface using ordinary least squares."""
-    df = da.to_dataframe().dropna().drop(columns=["time"]).reset_index()
+    df = ds[data_name].to_dataframe().dropna().drop(columns=["time"]).reset_index()
     if df.shape[0] == 0:
         # no data
-        return da * np.nan
+        return ds[data_name] * np.nan
     else:
-        model = LinearRegression().fit(df[["lon", "lat"]], df.iloc[:, -1])
+        if data_name == "sif":
+            X = df["lon"].values.reshape(-1, 1)
+        else:
+            X = df[["lon", "lat"]]
+        model = LinearRegression().fit(X, df.iloc[:, -1])
         df = df.iloc[:, :-1]
-        df["ols_mean"] = model.predict(df[["lon", "lat"]])
+        df["ols_mean"] = model.predict(X)
         return (
             df.set_index(["lon", "lat"])
             .to_xarray()
-            .assign_coords(coords={"time": da.time})["ols_mean"]
+            .assign_coords(coords={"time": ds[data_name].time})["ols_mean"]
         )
-
-
-# def get_monthly_ols_fits(da):
-#     return da.groupby("time").map(fit_ols)
-
-
-def preprocess_ds(
-    ds,
-    timestamp,
-    full_detrend=False,
-    spatial_mean="constant",
-    scale_fact=None,
-    spatial_std=False,
-):
-    """Apply data transformations and compute surface mean and standard deviation."""
-    data_name, var_name = get_field_names(ds)
-
-    # TODO: save actual trend so it can be added back to field in prediction
-    if full_detrend:
-        pass
-        # ds[data_name], _ = apply_detrend(ds[data_name])
-        ds[data_name] = remove_spatial_trend(ds[data_name])
-
-    # Select data at timestamp only
-    ds_field = ds.sel(time=timestamp)
-
-    if scale_fact:
-        ds_field[data_name] = ds_field[data_name] / scale_fact
-
-    if spatial_mean == "constant":
-        # Time indexed constant spatial mean
-        ds_field["spatial_mean"] = ds_field[data_name].mean()
-    elif spatial_mean == "ols":
-        # Fit time indexed spatial mean by OLS
-        ds_field["spatial_mean"] = fit_ols(ds_field[data_name])
-    else:
-        warnings.warn("ERROR: spatial mean must be `constant` or `ols`.")
-    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
-
-    if spatial_std:
-        # Divide by custom standard dev. calculated from residuals at all spatial locations
-        custom_std = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
-        ds_field[data_name] = ds_field[data_name] / custom_std
-
-    # if local_std:
-    #     # Divide by custom standard dev. calculated from each of the identical months to rescale locally
-    #     # NOTE: this would be more appropriate / feasible if we're working with all identical months anyway [save for later]
-    #     custom_std = lambda x: np.sqrt(np.nanmean(x ** 2, axis=-1))
-    #     ds_field["local_std"] = xr.apply_ufunc(
-    #         custom_std,
-    #         ds_field[data_name], # NOTE: this will need to be the dataset of months = m
-    #         input_core_dims=[["time"]],
-    #         output_core_dims=[[]],
-    #     )
-    #     ds_field[data_name] = ds_field[data_name] / ds_field["local_std"]
-
-    # ds_field["temporal_mean"] = ds_field[data_name].mean(dim="time")
-    # ds_field["temporal_std"] = ds_field[data_name].std(dim="time")
-    # ds_field[data_name] = (
-    #         ds_field[data_name] - ds_field["temporal_mean"]
-    #     ) / ds_field["temporal_std"]
-
-    # Remove outliers and return
-    return ds_field.where(np.abs(ds_field[data_name]) <= 3)
 
 
 def land_grid(lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):

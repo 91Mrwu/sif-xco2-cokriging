@@ -45,12 +45,12 @@ def preprocess_ds(ds, timestamp):
     ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
 
     # Rescale the data
-    ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
-    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+    # ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
+    # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
-    # # Divide by custom standard dev. calculated from residuals at all spatial locations
-    # resid_std = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
-    # ds_field[data_name] = ds_field[data_name] / resid_std
+    # Divide by custom standard dev. calculated from residuals at all spatial locations
+    ds_field.attrs["scale_fact"] = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
+    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return
     return ds_field.where(np.abs(ds_field[data_name]) <= 3)

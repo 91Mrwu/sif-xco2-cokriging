@@ -23,6 +23,11 @@ def get_field_names(ds):
     return data_name, var_name
 
 
+def standardize(x):
+    """Stadardize the elements of the input vector."""
+    return (x - x.mean()) / x.std()
+
+
 def remove_linear_trend(da):
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
     x = da.mean(dim=["lat", "lon"])
@@ -32,16 +37,13 @@ def remove_linear_trend(da):
 
 
 def fit_ols(ds, data_name):
-    """Estimate the mean surface using ordinary least squares."""
+    """Estimate the mean surface using ordinary least squares with standarized coordinates."""
     df = ds[data_name].to_dataframe().dropna().drop(columns=["time"]).reset_index()
     if df.shape[0] == 0:
         # no data
         return ds[data_name] * np.nan
     else:
-        if data_name == "sif":
-            X = df["lon"].values.reshape(-1, 1)
-        else:
-            X = df[["lon", "lat"]]
+        X = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
         model = LinearRegression().fit(X, df.iloc[:, -1])
         df = df.iloc[:, :-1]
         df["ols_mean"] = model.predict(X)

@@ -2,6 +2,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 import numpy as np
+from numpy.lib.function_base import median
 import pandas as pd
 import xarray as xr
 
@@ -30,6 +31,12 @@ def get_scale_factor(ds, data_name):
     )
 
 
+def median_abs_dev(x):
+    # NOTE: see https://en.wikipedia.org/wiki/Median_absolute_deviation for details
+    k = 1.4826  # scale factor assuming a normal distribution
+    return k * np.nanmedian(np.abs(x - np.nanmedian(x)))
+
+
 def preprocess_ds(ds, timestamp):
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, var_name = krige_tools.get_field_names(ds)
@@ -49,11 +56,13 @@ def preprocess_ds(ds, timestamp):
     # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Divide by custom standard dev. calculated from residuals at all spatial locations
-    ds_field.attrs["scale_fact"] = np.sqrt(np.nanmean(ds_field[data_name].values ** 2))
+    # ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
+    ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
     ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return
-    return ds_field.where(np.abs(ds_field[data_name]) <= 3)
+    return ds_field
+    # .where(np.abs(ds_field[data_name]) <= 3)
 
 
 class Field:

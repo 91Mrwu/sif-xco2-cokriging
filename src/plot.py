@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import xarray as xr
+import statsmodels.api as sm
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -68,6 +69,19 @@ def plot_da(
     ax.coastlines(zorder=10)
     ax.set_title(title, size=14)
     return (ax, cbar_ax)
+
+
+def qq_plots(mf):
+    # NOTE: assumes XCO2 is field_1
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
+
+    sm.qqplot(mf.field_1.values, line="45", ax=axes[0])
+    axes[0].set_title(f"XCO$_2$: {mf.field_1.timestamp}", fontsize=12)
+
+    sm.qqplot(mf.field_2.values, line="45", ax=axes[1])
+    axes[1].set_title(f"SIF: {mf.field_2.timestamp}", fontsize=12)
+
+    fig.suptitle("Q-Q plots: 4x5-degree residuals over North America", fontsize=14)
 
 
 def resid_climatology(df, title, filename=None):

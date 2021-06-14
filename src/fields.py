@@ -39,13 +39,14 @@ def median_abs_dev(x):
 
 def preprocess_ds(ds, timestamp):
     """Apply data transformations and compute surface mean and standard deviation."""
-    data_name, var_name = krige_tools.get_field_names(ds)
+    ds_copy = ds.copy()
+    data_name, var_name = krige_tools.get_field_names(ds_copy)
 
     # TODO: save actual trend so it can be added back to field in prediction
-    ds[data_name] = krige_tools.remove_linear_trend(ds[data_name])
+    ds_copy[data_name] = krige_tools.remove_linear_trend(ds_copy[data_name])
 
     # Select data at timestamp only
-    ds_field = ds.sel(time=timestamp)
+    ds_field = ds_copy.sel(time=timestamp)
 
     # Remove the OLS mean surface
     ds_field["spatial_mean"] = krige_tools.fit_ols(ds_field, data_name)
@@ -56,8 +57,8 @@ def preprocess_ds(ds, timestamp):
     # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Divide by custom standard dev. calculated from residuals at all spatial locations
-    # ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
-    ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
+    ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
+    # ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
     ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return
@@ -73,7 +74,7 @@ class Field:
     def __init__(self, ds, timestamp):
         self.timestamp = timestamp
         self.data_name, self.var_name = krige_tools.get_field_names(ds)
-        ds_prep = preprocess_ds(ds.copy(), timestamp)
+        ds_prep = preprocess_ds(ds, timestamp)
         df = ds_prep.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.ds = ds_prep
         self.coords = df[["lat", "lon"]].values

@@ -25,7 +25,7 @@ def get_field_names(ds):
 
 def standardize(x):
     """Stadardize the elements of the input vector."""
-    return (x - x.mean()) / x.std()
+    return (x - np.unique(x).mean()) / np.unique(x).std()
 
 
 def remove_linear_trend(da):

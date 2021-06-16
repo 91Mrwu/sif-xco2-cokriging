@@ -109,12 +109,23 @@ def global_grid(lon_res, lat_res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_up
 
 
 def regrid(
-    ds, lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90
+    ds=None,
+    df=None,
+    lon_res=1,
+    lat_res=1,
+    lon_lwr=-180,
+    lon_upr=180,
+    lat_lwr=-90,
+    lat_upr=90,
 ):
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
     """
-    df = ds.to_dataframe().reset_index()
+    if ds is not None:
+        df = ds.to_dataframe().reset_index()
+    elif df is None:
+        warnings.warn("No data provided.")
+
     grid = global_grid(
         lon_res,
         lat_res,

@@ -49,19 +49,23 @@ def cloud_calc(values1, values2, covariogram):
     return cloud
 
 
-def empirical_variogram(dist, values1, values2=None, n_bins=20, covariogram=False):
-    """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
+def variogram_cloud(dist, values1, values2=None, covariogram=False):
+    """Calculate the (cross-) semivariogram cloud from a distance matrix and corresponding points."""
     if values2 is not None:
         dist = dist.flatten()
         cloud = cloud_calc(values1, values2, covariogram).flatten()
     else:
-        idx = np.triu_indices(dist.shape[0], m=dist.shape[1])
+        idx = np.triu_indices(dist.shape[0], k=1, m=dist.shape[1])
         dist = dist[idx]
         cloud = cloud_calc(values1, values1, covariogram)[idx]
 
     assert cloud.shape == dist.shape
+    return pd.DataFrame({"distance": dist, "variogram": cloud})
 
-    df = pd.DataFrame({"distance": dist, "variogram": cloud})
+
+def empirical_variogram(dist, values1, values2=None, n_bins=20, covariogram=False):
+    """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
+    df = variogram_cloud(dist, values1, values2=values2, covariogram=covariogram)
     # NOTE: if computation becomes slow, this could be done before computing the cloud values
     df = df[df.distance <= 0.5 * dist.max()]
 

@@ -4,7 +4,7 @@ import numpy as np
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.interpolate import griddata
 
-import krige_tools
+import spatial_tools
 import cov_model
 
 
@@ -50,7 +50,7 @@ class Cokrige:
         norm_cov_mat = Sigma_11 - np.matmul(
             Sigma_12, cho_solve(cho_factor(Sigma_22, lower=True), Sigma_12.T)
         )
-        self.pred_cov = krige_tools.pre_post_diag(sigma, norm_cov_mat)
+        self.pred_cov = spatial_tools.pre_post_diag(sigma, norm_cov_mat)
         self.pred_error = np.sqrt(np.diagonal(self.pred_cov))
 
         if full_cov:
@@ -66,20 +66,20 @@ class Cokrige:
 
     def _get_pred_dist(self, pred_loc):
         """Computes distances between prediction point(s)."""
-        return krige_tools.distance_matrix(
+        return spatial_tools.distance_matrix(
             pred_loc, pred_loc, units=self.dist_units, fast_dist=self.fast_dist
         )
 
     def _get_cross_dist(self, pred_loc):
         """Computes distances between prediction point(s) and data values."""
         return {
-            "block_11": krige_tools.distance_matrix(
+            "block_11": spatial_tools.distance_matrix(
                 pred_loc,
                 self.fields.field_1.coords,
                 units=self.dist_units,
                 fast_dist=self.fast_dist,
             ),
-            "block_12": krige_tools.distance_matrix(
+            "block_12": spatial_tools.distance_matrix(
                 pred_loc,
                 self.fields.field_2.coords,
                 units=self.dist_units,
@@ -106,7 +106,7 @@ class Cokrige:
         """
         if method == "temporal":
             df = (
-                krige_tools.preprocess_ds(ds)
+                spatial_tools.preprocess_ds(ds)
                 .sel(time=self.fields.field_1.timestamp)
                 .to_dataframe()
                 .reset_index()
@@ -122,7 +122,7 @@ class Cokrige:
         """Fits the surface standard deviation at prediction locations using the supplied mean function."""
         if method == "temporal":
             df = (
-                krige_tools.preprocess_ds(ds)
+                spatial_tools.preprocess_ds(ds)
                 .sel(time=self.fields.field_1.timestamp)
                 .to_dataframe()
                 .reset_index()

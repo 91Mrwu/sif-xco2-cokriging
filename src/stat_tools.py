@@ -4,6 +4,13 @@ import pandas as pd
 import xarray
 from sklearn.linear_model import LinearRegression
 
+
+## Generic stats
+def standardize(x):
+    """Stadardize the elements of the input vector (based on unique elements)."""
+    return (x - np.unique(x).mean()) / np.unique(x).std()
+
+
 ## Counts / replications
 def get_count(da):
     """

@@ -10,43 +10,39 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 from sklearn.metrics.pairwise import haversine_distances
 from sklearn.linear_model import LinearRegression
-import statsmodels.api as sm
 
 import data_utils
-from stat_tools import simple_linear_regression
+from stat_tools import standardize, simple_linear_regression
 
 
-def get_field_names(ds):
-    """Returns data and estimated variance names from dataset."""
-    var_name = [name for name in list(ds.keys()) if "_var" in name][0]
-    data_name = var_name.replace("_var", "")
-    return data_name, var_name
-
-
-def standardize(x):
-    """Stadardize the elements of the input vector."""
-    return (x - np.unique(x).mean()) / np.unique(x).std()
-
-
-def remove_linear_trend(da):
+def fit_linear_trend(da):
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
     x = da.mean(dim=["lat", "lon"])
     trend = simple_linear_regression(x.values)
-    da_trend = xr.DataArray(trend, dims=["time"], coords={"time": da.time})
-    return da - da_trend
+    return xr.DataArray(trend, dims=["time"], coords={"time": da.time})
 
 
 def fit_ols(ds, data_name):
     """Estimate the mean surface using ordinary least squares with standarized coordinates."""
-    df = ds[data_name].to_dataframe().dropna().drop(columns=["time"]).reset_index()
+    df = ds[data_name].to_dataframe().drop(columns=["time"]).dropna().reset_index()
+    if df.shape[0] == 0:
+        # no data
+        return None
+    else:
+        coords = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
+    return LinearRegression().fit(coords, df.iloc[:, -1])
+
+
+def predict_ols(ds, data_name, model):
+    """Predict the mean surface using the fitted model."""
+    df = ds[data_name].to_dataframe().drop(columns=["time"]).dropna().reset_index()
     if df.shape[0] == 0:
         # no data
         return ds[data_name] * np.nan
     else:
-        X = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
-        model = LinearRegression().fit(X, df.iloc[:, -1])
+        coords = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
         df = df.iloc[:, :-1]
-        df["ols_mean"] = model.predict(X)
+        df["ols_mean"] = model.predict(coords)
         return (
             df.set_index(["lon", "lat"])
             .to_xarray()

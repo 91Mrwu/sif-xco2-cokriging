@@ -8,7 +8,7 @@ import scipy.special as sps
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.optimize import minimize
 
-import krige_tools
+import spatial_tools
 import variogram as vgm
 
 
@@ -154,7 +154,7 @@ class BivariateMatern:
 
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
-        return krige_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
+        return spatial_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
 
     def set_params(self, params_arr):
         """Set model parameters."""
@@ -253,7 +253,7 @@ class BivariateMatern:
     #         len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
     #     )
     #     self.rho = pearsonr(
-    #         *krige_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
+    #         *spatial_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
     #     )[0]
 
     #     return self, (vario_obj1, vario_obj2)

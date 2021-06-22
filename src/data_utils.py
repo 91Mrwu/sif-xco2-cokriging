@@ -153,6 +153,30 @@ def regrid(
     )
     return df
 
+def set_main_lon(lon_lwr=-125, lon_upr=-65, lon_res=5):
+    """Sets the base longitudinal coordinates for mirco-lag adjustments."""
+    lon_bins = np.arange(lon_lwr, lon_upr + lon_res, lon_res)
+    lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
+    return lon_bins, lon_centers
+
+def get_main_lon(ds, lon_centers):
+    """
+    Returns the data array with base longitudinal coordinates only.
+    Parameters: 
+        - xarray dataset
+        - numpy array
+    Returns: 
+        - xarray dataset
+    """
+    return (
+        ds
+        .to_dataframe()
+        .reset_index()
+        .merge(pd.DataFrame({"lon": lon_centers}), on="lon", how="inner")
+        .set_index(["lon", "lat", "time"])
+        .to_xarray()
+    )
+
 
 def map_transcom(ds, ds_tc):
     """

@@ -6,7 +6,7 @@ import pandas as pd
 import scipy.special as sps
 from scipy.optimize import curve_fit, minimize
 
-from krige_tools import distance_matrix
+from spatial_tools import distance_matrix
 
 # TODO: establish a variogram class
 SIG_L = 0.2
@@ -42,10 +42,12 @@ def shift_longitude(coords):
 # @njit
 def cloud_calc(values1, values2, covariogram):
     """Calculate the semivariogram or covariogram for all point pairs."""
+    resid1 = values1 - values1.mean()
+    resid2 = values2 - values2.mean()
     if covariogram:
-        cloud = np.multiply.outer(values1, values2)
+        cloud = np.multiply.outer(resid1, resid2)
     else:
-        cloud = 0.5 * (np.subtract.outer(values1, values2)) ** 2
+        cloud = 0.5 * (np.subtract.outer(resid1, resid2)) ** 2
     return cloud
 
 
@@ -61,6 +63,27 @@ def variogram_cloud(dist, values1, values2=None, covariogram=False):
 
     assert cloud.shape == dist.shape
     return pd.DataFrame({"distance": dist, "variogram": cloud})
+
+
+def microlag_clouds(df_group, data_name, fast_dist=True):
+    """For a given lat-lon group in a microlag dataframe, compute all semivariogram and cross-semivariogram clouds. Return in columns of shared dataframe."""
+    coords = df_group[["lat", "lon"]].values
+    dist = distance_matrix(coords, coords, fast_dist=fast_dist)
+    values = df_group[data_name].values
+    return variogram_cloud(dist, values)
+
+    # # How to incorporate cross-semivariogram into microlag cloud?
+    # cloud_sif = variogram_cloud(dist, values_sif)
+    # cloud_cross = variogram_cloud(dist, values_xco2, values2=values_sif)
+
+    # return pd.DataFrame(
+    #     {
+    #         "distance": cloud_xco2.distance,
+    #         "variogram_xco2": cloud_xco2.variogram,
+    #         "variogram_sif": cloud_sif.variogram,
+    #         "variogram_cross": cloud_cross.variogram,
+    #     }
+    # )
 
 
 def empirical_variogram(dist, values1, values2=None, n_bins=20, covariogram=False):

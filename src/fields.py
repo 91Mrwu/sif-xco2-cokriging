@@ -2,13 +2,10 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 import numpy as np
-from numpy.lib.function_base import median
 import pandas as pd
 import xarray as xr
 
 import spatial_tools
-from data_utils import set_main_lon, get_main_lon
-from variogram import shift_longitude, empirical_variogram
 
 
 def get_field_names(ds):
@@ -18,27 +15,27 @@ def get_field_names(ds):
     return data_name, var_name
 
 
-def get_scale_factor(ds, data_name):
-    """Computes the initial univariate semivariograms, and returns the square root of each semivariogram value based on the most pairs around a lag of 1000 km."""
-    # Compute the semivariogram
-    df = ds[data_name].to_dataframe().reset_index().dropna(subset=[data_name])
-    values = df[data_name].values
-    coords = df[["lat", "lon"]].values
+# def get_scale_factor(ds, data_name):
+#     """Computes the initial univariate semivariograms, and returns the square root of each semivariogram value based on the most pairs around a lag of 1000 km."""
+#     # Compute the semivariogram
+#     df = ds[data_name].to_dataframe().reset_index().dropna(subset=[data_name])
+#     values = df[data_name].values
+#     coords = df[["lat", "lon"]].values
 
-    if values.size == 0:
-        return np.nan
+#     if values.size == 0:
+#         return np.nan
 
-    dist = spatial_tools.distance_matrix(
-        coords, shift_longitude(coords), fast_dist=True
-    )
-    df_vgm = empirical_variogram(dist, values, n_bins=50, covariogram=False)
+#     dist = spatial_tools.distance_matrix(
+#         coords, shift_longitude(coords), fast_dist=True
+#     )
+#     df_vgm = empirical_variogram(dist, values, n_bins=50, covariogram=False)
 
-    # Get the root of the value which uses the most pairs around lag 1000 km
-    return np.sqrt(
-        df_vgm[df_vgm["bin_center"].between(900, 1100)]
-        .sort_values("count", ascending=False)["bin_mean"]
-        .values[0]
-    )
+#     # Get the root of the value which uses the most pairs around lag 1000 km
+#     return np.sqrt(
+#         df_vgm[df_vgm["bin_center"].between(900, 1100)]
+#         .sort_values("count", ascending=False)["bin_mean"]
+#         .values[0]
+#     )
 
 
 def median_abs_dev(x):
@@ -49,26 +46,19 @@ def median_abs_dev(x):
 
 def preprocess_ds(ds, timestamp):
     """Apply data transformations and compute surface mean and standard deviation."""
-    lon_bins, lon_centers = set_main_lon()
-    ds_main_lon = get_main_lon(ds, lon_centers).copy()
-    data_name, var_name = get_field_names(ds_main_lon)
+    data_name, _ = get_field_names(ds)
+    ds_copy = ds.copy()
 
-    ## Process main data
     # Remove linear trend over time
-    ds_main_lon["temporal_trend"] = spatial_tools.fit_linear_trend(
-        ds_main_lon[data_name]
-    )
-    ds_main_lon[data_name] = ds_main_lon[data_name] - ds_main_lon["temporal_trend"]
+    ds_copy["temporal_trend"] = spatial_tools.fit_linear_trend(ds_copy[data_name])
+    ds_copy[data_name] = ds_copy[data_name] - ds_copy["temporal_trend"]
 
     # Select data at timestamp only
-    ds_field = ds_main_lon.sel(time=timestamp)
-    ds_field.attrs["temporal_trend"] = ds_field["temporal_trend"].values
+    ds_field = ds_copy.sel(time=timestamp)
+    ds_field.attrs["temporal_fit"] = ds_field["temporal_fit"].values
 
     # Remove the OLS mean surface
-    ds_field.attrs["surface_model"] = spatial_tools.fit_ols(ds_field, data_name)
-    ds_field["spatial_mean"] = spatial_tools.predict_ols(
-        ds_field, data_name, ds_field.attrs["surface_model"]
-    )
+    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name)
     ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
 
     # Rescale the data
@@ -80,21 +70,8 @@ def preprocess_ds(ds, timestamp):
     # ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
     ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
-    ## Process microlag dataframe using the values / models computed for the base dataset
-    ds_micro = ds.sel(time=timestamp)
-    ds_micro[data_name] = ds_micro[data_name] - ds_field.attrs["temporal_trend"]
-    ds_micro[data_name] = ds_micro[data_name] - spatial_tools.predict_ols(
-        ds_micro, data_name, ds_field.attrs["surface_model"]
-    )
-    ds_micro[data_name] = ds_micro[data_name] / ds_field.attrs["scale_fact"]
-
-    df_micro = ds_micro.to_dataframe().reset_index().drop(columns=[var_name, "time"])
-    df_micro["lon_group"] = pd.cut(
-        df_micro["lon"], lon_bins, labels=lon_centers, include_lowest=True
-    )
-
     # Remove outliers and return
-    return ds_field, df_micro
+    return ds_field
     # .where(np.abs(ds_field[data_name]) <= 3)
 
 
@@ -106,10 +83,9 @@ class Field:
     def __init__(self, ds, timestamp):
         self.timestamp = timestamp
         self.data_name, self.var_name = get_field_names(ds)
-        ds_prep, df_micro = preprocess_ds(ds, timestamp)
+        ds_prep = preprocess_ds(ds, timestamp)
         df = ds_prep.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.ds = ds_prep
-        self.df_micro = df_micro
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
         self.spatial_mean = df["spatial_mean"].values
@@ -166,11 +142,8 @@ class MultiField:
         self.timedelta = timedelta
         self.dist_units = dist_units
         self.fast_dist = fast_dist
-
-        _, lon_centers = set_main_lon()
-        self.ds_1 = get_main_lon(ds_1, lon_centers)
-        self.ds_2 = get_main_lon(ds_2, lon_centers)
-
+        self.ds_1 = ds_1
+        self.ds_2 = ds_2
         self.field_1 = Field(ds_1, timestamp)
         self.field_2 = Field(ds_2, self._apply_timedelta())
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))

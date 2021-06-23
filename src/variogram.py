@@ -32,13 +32,6 @@ def construct_variogram_bins(min_dist, max_dist, n_bins):
     return bin_centers, bin_edges
 
 
-def shift_longitude(coords):
-    """Given an array of [[lat, lon]] in real degrees, add 0.5-degrees to longitude values."""
-    coords_s = np.copy(coords)
-    coords_s[:, 1] = coords_s[:, 1] + 0.5
-    return coords_s
-
-
 # @njit
 def cloud_calc(values1, values2, covariogram):
     """Calculate the semivariogram or covariogram for all point pairs."""
@@ -65,28 +58,28 @@ def variogram_cloud(dist, values1, values2=None, covariogram=False):
     return pd.DataFrame({"distance": dist, "variogram": cloud})
 
 
-def microlag_clouds(df_group, data_name, fast_dist=True):
-    """For a given lat-lon group in a microlag dataframe, compute all semivariogram and cross-semivariogram clouds. Return in columns of shared dataframe."""
-    coords = df_group[["lat", "lon"]].values
-    dist = distance_matrix(coords, coords, fast_dist=fast_dist)
-    values = df_group[data_name].values
-    return variogram_cloud(dist, values)
+# def microlag_clouds(df_group, data_name, fast_dist=True):
+#     """For a given lat-lon group in a microlag dataframe, compute all semivariogram and cross-semivariogram clouds. Return in columns of shared dataframe."""
+#     coords = df_group[["lat", "lon"]].values
+#     dist = distance_matrix(coords, coords, fast_dist=fast_dist)
+#     values = df_group[data_name].values
+#     return variogram_cloud(dist, values)
 
-    # # How to incorporate cross-semivariogram into microlag cloud?
-    # cloud_sif = variogram_cloud(dist, values_sif)
-    # cloud_cross = variogram_cloud(dist, values_xco2, values2=values_sif)
+#     # # How to incorporate cross-semivariogram into microlag cloud?
+#     # cloud_sif = variogram_cloud(dist, values_sif)
+#     # cloud_cross = variogram_cloud(dist, values_xco2, values2=values_sif)
 
-    # return pd.DataFrame(
-    #     {
-    #         "distance": cloud_xco2.distance,
-    #         "variogram_xco2": cloud_xco2.variogram,
-    #         "variogram_sif": cloud_sif.variogram,
-    #         "variogram_cross": cloud_cross.variogram,
-    #     }
-    # )
+#     # return pd.DataFrame(
+#     #     {
+#     #         "distance": cloud_xco2.distance,
+#     #         "variogram_xco2": cloud_xco2.variogram,
+#     #         "variogram_sif": cloud_sif.variogram,
+#     #         "variogram_cross": cloud_cross.variogram,
+#     #     }
+#     # )
 
 
-def empirical_variogram(dist, values1, values2=None, n_bins=20, covariogram=False):
+def empirical_variogram(dist, values1, values2=None, n_bins=50, covariogram=False):
     """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
     df = variogram_cloud(dist, values1, values2=values2, covariogram=covariogram)
     # NOTE: if computation becomes slow, this could be done before computing the cloud values
@@ -266,19 +259,11 @@ def variogram_analysis(
     """
     fields = [mf.field_1, mf.field_2]
     dists = [
-        distance_matrix(
-            mf.field_1.coords,
-            shift_longitude(mf.field_1.coords),
-            fast_dist=mf.fast_dist,
-        ),
-        distance_matrix(
-            mf.field_2.coords,
-            shift_longitude(mf.field_2.coords),
-            fast_dist=mf.fast_dist,
-        ),
+        distance_matrix(mf.field_1.coords, mf.field_1.coords, fast_dist=mf.fast_dist,),
+        distance_matrix(mf.field_2.coords, mf.field_2.coords, fast_dist=mf.fast_dist,),
     ]
     dist_cross = distance_matrix(
-        mf.field_1.coords, shift_longitude(mf.field_2.coords), fast_dist=mf.fast_dist
+        mf.field_1.coords, mf.field_2.coords, fast_dist=mf.fast_dist
     )
 
     # Compute and fit semivariograms and covariograms

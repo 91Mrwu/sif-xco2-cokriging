@@ -153,11 +153,75 @@ def regrid(
     )
     return df
 
+
+def monthly_avg(df_grid):
+    """Group dataframe by relabeled lat-lon coordinates and compute monthy average."""
+    return (
+        df_grid.groupby(["lon", "lat"])
+        .resample("1MS", on="time")
+        .mean()
+        .drop(columns=["lon", "lat"])
+        .reset_index()
+    )
+
+
+def prep_gridded_df(ds, lon_offset=0, lat_offset=0):
+    """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America. Return as data frame."""
+    assert (
+        lon_offset == 0 or lat_offset == 0
+    ), "lon_offset and/or lat_offset must be zero"
+    extents = [-125, -65, 22, 58]
+    lon_res = 5
+    lat_res = 4
+    lon_lwr = extents[0] - lon_res / 2 + lon_offset
+    lon_upr = extents[1] + lon_res / 2 + lon_offset
+    lat_lwr = extents[2] - lat_res / 2 + lat_offset
+    lat_upr = extents[3] + lat_res / 2 + lat_offset
+
+    df = ds.to_dataframe()
+    bounds = (
+        (df.lon >= lon_lwr)
+        & (df.lon <= lon_upr)
+        & (df.lat >= lat_lwr)
+        & (df.lat <= lat_upr)
+    )
+    # drop data outside domain extents so it's not included in edge bin averages
+    df = df.loc[bounds].reset_index()
+    df_grid = regrid(
+        df=df,
+        lon_res=lon_res,
+        lat_res=lat_res,
+        lon_lwr=lon_lwr,
+        lon_upr=lon_upr + lon_res,
+        lat_lwr=lat_lwr,
+        lat_upr=lat_upr + lat_res,
+    )
+
+    return monthly_avg(df_grid)
+
+
+def augment_dataset(ds):
+    """Prepare gridded dataframes for each longitude and latitude offset, and return as a single dataframe."""
+    lat_offsets = np.linspace(-1.5, 2, 8)
+    lon_offsets = np.linspace(-2, 2.5, 10)
+    # drop zero offset from one set so there is no repeat of the base coordinates
+    lon_offsets = lon_offsets[lon_offsets != 0]
+
+    frame_list_lat = [
+        prep_gridded_df(ds, lat_offset=lat_off) for lat_off in lat_offsets
+    ]
+    frame_list_lon = [
+        prep_gridded_df(ds, lon_offset=lon_off) for lon_off in lon_offsets
+    ]
+    return pd.concat(frame_list_lat + frame_list_lon)
+
+
 def set_main_lon(lon_lwr=-125, lon_upr=-65, lon_res=5):
     """Sets the base longitudinal coordinates for mirco-lag adjustments."""
     lon_bins = np.arange(lon_lwr, lon_upr + lon_res, lon_res)
     lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
     return lon_bins, lon_centers
+
 
 def get_main_lon(ds, lon_centers):
     """
@@ -169,8 +233,7 @@ def get_main_lon(ds, lon_centers):
         - xarray dataset
     """
     return (
-        ds
-        .to_dataframe()
+        ds.to_dataframe()
         .reset_index()
         .merge(pd.DataFrame({"lon": lon_centers}), on="lon", how="inner")
         .set_index(["lon", "lat", "time"])

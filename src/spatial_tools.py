@@ -23,24 +23,14 @@ def fit_linear_trend(da):
 
 
 def fit_ols(ds, data_name):
-    """Estimate the mean surface using ordinary least squares with standarized coordinates."""
-    df = ds[data_name].to_dataframe().drop(columns=["time"]).dropna().reset_index()
-    if df.shape[0] == 0:
-        # no data
-        return None
-    else:
-        coords = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
-    return LinearRegression().fit(coords, df.iloc[:, -1])
-
-
-def predict_ols(ds, data_name, model):
-    """Predict the mean surface using the fitted model."""
+    """Fit and predict the mean surface using ordinary least squares with standarized coordinates."""
     df = ds[data_name].to_dataframe().drop(columns=["time"]).dropna().reset_index()
     if df.shape[0] == 0:
         # no data
         return ds[data_name] * np.nan
     else:
         coords = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
+        model = LinearRegression().fit(coords, df.iloc[:, -1])
         df = df.iloc[:, :-1]
         df["ols_mean"] = model.predict(coords)
         return (

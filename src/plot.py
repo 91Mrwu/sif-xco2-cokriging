@@ -32,7 +32,7 @@ def set_gridlines(ax):
     gl.xlines = True
     gl.ylines = True
     gl.xlocator = mticker.FixedLocator([-120, -100, -80, -60])
-    gl.ylocator = mticker.FixedLocator([16, 32, 50])
+    gl.ylocator = mticker.FixedLocator([30, 50])
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
 
@@ -183,7 +183,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
 
     da_xco2 = mf.field_1.ds.xco2
     da_sif = mf.field_2.ds.sif
-    extents = [-125, -60, 22, 58]
+    extents = [-130, -60, 18, 60]
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)

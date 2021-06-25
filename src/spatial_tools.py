@@ -4,7 +4,6 @@ from numba import njit
 import numpy as np
 import pandas as pd
 import xarray as xr
-import regionmask
 
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
@@ -38,36 +37,6 @@ def fit_ols(ds, data_name):
             .to_xarray()
             .assign_coords(coords={"time": ds[data_name].time})["ols_mean"]
         )
-
-
-def land_grid(lon_res=1, lat_res=1, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
-    """Collect land locations on a regular grid as an array.
-
-    Returns rows with entries [[lat, lon]].
-    """
-    # establish a fine resolution grid of 0.25 degrees for accuracy
-    grid = data_utils.global_grid(
-        0.25, 0.25, lon_lwr=lon_lwr, lon_upr=lon_upr, lat_lwr=lat_lwr, lat_upr=lat_upr
-    )
-    land = regionmask.defined_regions.natural_earth.land_110
-    mask = land.mask(grid["lon_centers"], grid["lat_centers"])
-    # regrid to desired resolution and remove non-land areas
-    df_mask = (
-        data_utils.regrid(
-            mask,
-            lon_res=lon_res,
-            lat_res=lat_res,
-            lon_lwr=lon_lwr,
-            lon_upr=lon_upr,
-            lat_lwr=lat_lwr,
-            lat_upr=lat_upr,
-        )
-        .dropna(subset=["region"])
-        .groupby(["lon", "lat"])
-        .mean()
-        .reset_index()
-    )
-    return df_mask[["lat", "lon"]].values
 
 
 def expand_grid(*args):

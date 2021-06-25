@@ -55,7 +55,7 @@ def preprocess_ds(ds, timestamp):
 
     # Select data at timestamp only
     ds_field = ds_copy.sel(time=timestamp)
-    ds_field.attrs["temporal_fit"] = ds_field["temporal_fit"].values
+    ds_field.attrs["temporal_fit"] = ds_field["temporal_trend"].values
 
     # Remove the OLS mean surface
     ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name)

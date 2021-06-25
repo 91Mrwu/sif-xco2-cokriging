@@ -3,7 +3,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
-import xarray
+import xarray as xr
+import regionmask
 
 """
 TODO:
@@ -35,7 +36,7 @@ def prep_sif(ds):
     ds = ds.where(ds.SIF_plus_3sig > 0, drop=True)
 
     # format dataset
-    return xarray.Dataset(
+    return xr.Dataset(
         {
             "sif": (["time"], ds.Daily_SIF_740nm),
             "sif_var": (["time"], ds.SIF_Uncertainty_740nm ** 2),
@@ -70,7 +71,7 @@ def prep_xco2(ds):
     ds = ds.where(ds.xco2_quality_flag == 0, drop=True)
 
     # format dataset
-    return xarray.Dataset(
+    return xr.Dataset(
         {"xco2": (["time"], ds.xco2), "xco2_var": (["time"], ds.xco2_uncertainty * 2)},
         coords={
             "lon": (["time"], ds.longitude),
@@ -84,22 +85,45 @@ def read_transcom(path):
     """
     Read 1-degree TransCom 3 region map into xarray dataset.
     """
-    ds = xarray.open_dataset(path)
+    ds = xr.open_dataset(path)
     ds = ds.where(ds.region < 12, drop=True)
     ds = ds.where(ds.region != 0, drop=True)
-
     return ds
 
 
 ## Formatting
-def global_grid(lon_res, lat_res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_upr=90):
+def set_grid_def(lon_res=1, lat_res=1, lon_offset=0, lat_offset=0):
+    assert (
+        lon_offset == 0 or lat_offset == 0
+    ), "lon_offset and/or lat_offset must be zero"
+    return {
+        "lon_res": lon_res,
+        "lat_res": lat_res,
+        "lon_offset": lon_offset,
+        "lat_offset": lat_offset,
+    }
+
+
+def prep_extents(extents, grid_def):
+    lon_lwr = extents[0] - grid_def["lon_res"] / 2 + grid_def["lon_offset"]
+    lon_upr = extents[1] + grid_def["lon_res"] / 2 + grid_def["lon_offset"]
+    lat_lwr = extents[2] - grid_def["lat_res"] / 2 + grid_def["lat_offset"]
+    lat_upr = extents[3] + grid_def["lat_res"] / 2 + grid_def["lat_offset"]
+    return lon_lwr, lon_upr, lat_lwr, lat_upr
+
+
+def global_grid(extents=None, grid_def=None):
     """Establish longitude and latitude bins and centerpoints on a global grid."""
-    lon_bins = np.arange(lon_lwr, lon_upr + lon_res, lon_res)
-    lat_bins = np.arange(lat_lwr, lat_upr + lat_res, lat_res)
+    if extents is None:
+        extents = [-180, 180, -90, 90]
+    if grid_def is None:
+        grid_def = dict(lon_res=1.0, lat_res=1.0, lon_offset=0.0, lat_offset=0.0)
+
+    lon_lwr, lon_upr, lat_lwr, lat_upr = prep_extents(extents, grid_def)
+    lon_bins = np.arange(lon_lwr, lon_upr + grid_def["lon_res"], grid_def["lon_res"])
+    lat_bins = np.arange(lat_lwr, lat_upr + grid_def["lat_res"], grid_def["lat_res"])
     lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
     lat_centers = (lat_bins[1:] + lat_bins[:-1]) / 2
-    if np.any(lon_centers == 0) or np.any(lat_centers == 0):
-        warnings.warn("WARNING: grid may not be considered centered.")
     return {
         "lon_bins": lon_bins,
         "lon_centers": lon_centers,
@@ -108,16 +132,7 @@ def global_grid(lon_res, lat_res, lon_lwr=-180, lon_upr=180, lat_lwr=-90, lat_up
     }
 
 
-def regrid(
-    ds=None,
-    df=None,
-    lon_res=1,
-    lat_res=1,
-    lon_lwr=-180,
-    lon_upr=180,
-    lat_lwr=-90,
-    lat_upr=90,
-):
+def regrid(ds=None, df=None, extents=None, grid_def=None):
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
     """
@@ -126,19 +141,12 @@ def regrid(
     elif df is None:
         warnings.warn("No data provided.")
 
-    grid = global_grid(
-        lon_res,
-        lat_res,
-        lon_lwr=lon_lwr,
-        lon_upr=lon_upr,
-        lat_lwr=lat_lwr,
-        lat_upr=lat_upr,
-    )
+    grid = global_grid(extents=extents, grid_def=grid_def)
     bounds_check = (
-        lon_lwr <= df.lon.min()
-        and lon_upr >= df.lon.max()
-        and lat_lwr <= df.lat.min()
-        and lat_upr >= df.lat.max()
+        grid["lon_bins"].min() <= df.lon.min()
+        and grid["lon_bins"].max() >= df.lon.max()
+        and grid["lat_bins"].min() <= df.lat.min()
+        and grid["lat_bins"].max() >= df.lat.max()
     )
     if not bounds_check:
         warnings.warn(
@@ -154,6 +162,27 @@ def regrid(
     return df
 
 
+def land_grid(extents=None, grid_def=None):
+    """Collect land locations on a regular grid as an array.
+
+    Returns rows with entries [[lat, lon]].
+    """
+    # establish a fine resolution grid of 0.25 degrees for accuracy
+    fine_res_def = set_grid_def(lon_res=0.25, lat_res=0.25)
+    grid = global_grid(extents, fine_res_def)
+    land = regionmask.defined_regions.natural_earth.land_110
+    mask = land.mask(grid["lon_centers"], grid["lat_centers"])
+    # regrid to desired resolution and remove non-land areas
+    df_mask = (
+        regrid(mask, extents=extents, grid_def=grid_def)
+        .dropna(subset=["region"])
+        .groupby(["lon", "lat"])
+        .mean()
+        .reset_index()
+    )
+    return df_mask[["lat", "lon"]].assign(land=lambda x: 1).set_index(["lon", "lat"])
+
+
 def monthly_avg(df_grid):
     """Group dataframe by relabeled lat-lon coordinates and compute monthy average."""
     return (
@@ -165,19 +194,19 @@ def monthly_avg(df_grid):
     )
 
 
-def prep_gridded_df(ds, lon_offset=0, lat_offset=0):
-    """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America. Return as data frame."""
-    assert (
-        lon_offset == 0 or lat_offset == 0
-    ), "lon_offset and/or lat_offset must be zero"
-    extents = [-125, -65, 22, 58]
-    lon_res = 5
-    lat_res = 4
-    lon_lwr = extents[0] - lon_res / 2 + lon_offset
-    lon_upr = extents[1] + lon_res / 2 + lon_offset
-    lat_lwr = extents[2] - lat_res / 2 + lat_offset
-    lat_upr = extents[3] + lat_res / 2 + lat_offset
+def apply_land_mask(df, extents=None, grid_def=None):
+    df_land = land_grid(extents, grid_def)
+    return (
+        df.join(df_land, on=["lon", "lat"], how="outer")
+        .dropna(subset=["land"])
+        .reset_index()
+        .drop(columns=["land", "index"])
+    )
 
+
+def prep_gridded_df(ds, extents=None, grid_def=None):
+    """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America (land only). Return as data frame."""
+    lon_lwr, lon_upr, lat_lwr, lat_upr = prep_extents(extents, grid_def)
     df = ds.to_dataframe()
     bounds = (
         (df.lon >= lon_lwr)
@@ -187,43 +216,46 @@ def prep_gridded_df(ds, lon_offset=0, lat_offset=0):
     )
     # drop data outside domain extents so it's not included in edge bin averages
     df = df.loc[bounds].reset_index()
-    df_grid = regrid(
-        df=df,
-        lon_res=lon_res,
-        lat_res=lat_res,
-        lon_lwr=lon_lwr,
-        lon_upr=lon_upr + lon_res,
-        lat_lwr=lat_lwr,
-        lat_upr=lat_upr + lat_res,
-    )
-
-    return monthly_avg(df_grid)
+    df_grid = regrid(df=df, extents=extents, grid_def=grid_def)
+    df_grid = monthly_avg(df_grid)
+    return apply_land_mask(df_grid, extents, grid_def)
 
 
 def augment_dataset(ds):
     """Prepare gridded dataframes for each longitude and latitude offset, and return as a single dataframe."""
+    extents = [-125, -65, 22, 58]
     lat_offsets = np.linspace(-1.5, 2, 8)
     lon_offsets = np.linspace(-2, 2.5, 10)
     # drop zero offset from one set so there is no repeat of the base coordinates
     lon_offsets = lon_offsets[lon_offsets != 0]
 
+    list_def_lat = [
+        set_grid_def(lon_res=5, lat_res=4, lat_offset=lat_off)
+        for lat_off in lat_offsets
+    ]
+    list_def_lon = [
+        set_grid_def(lon_res=5, lat_res=4, lon_offset=lon_off)
+        for lon_off in lon_offsets
+    ]
     frame_list_lat = [
-        prep_gridded_df(ds, lat_offset=lat_off) for lat_off in lat_offsets
+        prep_gridded_df(ds, extents, grid_def) for grid_def in list_def_lat
     ]
     frame_list_lon = [
-        prep_gridded_df(ds, lon_offset=lon_off) for lon_off in lon_offsets
+        prep_gridded_df(ds, extents, grid_def) for grid_def in list_def_lon
     ]
     return pd.concat(frame_list_lat + frame_list_lon)
 
 
-def set_main_lon(lon_lwr=-125, lon_upr=-65, lon_res=5):
-    """Sets the base longitudinal coordinates for mirco-lag adjustments."""
-    lon_bins = np.arange(lon_lwr, lon_upr + lon_res, lon_res)
-    lon_centers = (lon_bins[1:] + lon_bins[:-1]) / 2
-    return lon_bins, lon_centers
+def set_main_coords(extents=None, lon_res=5, lat_res=4):
+    """Sets the base coordinates for augmentation reference."""
+    if extents is None:
+        extents = [-125, -65, 22, 58]
+    lon_centers = np.arange(extents[0], extents[1] + lon_res, lon_res, dtype=float)
+    lat_centers = np.arange(extents[2], extents[3] + lat_res, lat_res, dtype=float)
+    return lon_centers, lat_centers
 
 
-def get_main_lon(ds, lon_centers):
+def get_main_coords(ds, lon_centers, lat_centers):
     """
     Returns the data array with base longitudinal coordinates only.
     Parameters: 
@@ -235,6 +267,7 @@ def get_main_lon(ds, lon_centers):
     return (
         ds.to_dataframe()
         .reset_index()
+        .merge(pd.DataFrame({"lat": lat_centers}), on="lat", how="inner")
         .merge(pd.DataFrame({"lon": lon_centers}), on="lon", how="inner")
         .set_index(["lon", "lat", "time"])
         .to_xarray()

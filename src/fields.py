@@ -66,8 +66,8 @@ def preprocess_ds(ds, timestamp):
     # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Divide by custom standard dev. calculated from residuals at all spatial locations
-    ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
-    # ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
+    # ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
+    ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
     ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return

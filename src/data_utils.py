@@ -91,7 +91,7 @@ def read_transcom(path):
     return ds
 
 
-## Formatting
+## Wrangling
 def set_grid_def(lon_res=1, lat_res=1, lon_offset=0, lat_offset=0):
     assert (
         lon_offset == 0 or lat_offset == 0

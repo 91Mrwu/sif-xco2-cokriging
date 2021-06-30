@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import scipy.special as sps
-from scipy.optimize import curve_fit, minimize
+from scipy.optimize import minimize
 
 from spatial_tools import distance_matrix
 
@@ -79,7 +79,9 @@ def variogram_cloud(dist, values1, values2=None, covariogram=False):
 #     # )
 
 
-def empirical_variogram(dist, values1, values2=None, n_bins=50, covariogram=False):
+def empirical_variogram(
+    dist, values1, values2=None, n_bins=50, covariogram=False, label=None
+):
     """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
     df = variogram_cloud(dist, values1, values2=values2, covariogram=covariogram)
     # NOTE: if computation becomes slow, this could be done before computing the cloud values
@@ -99,10 +101,12 @@ def empirical_variogram(dist, values1, values2=None, n_bins=50, covariogram=Fals
     )
     # convert bins from categories to numeric
     df["bin_center"] = df["bin_center"].astype("string").astype("float")
-    # if (df["count"] < 30).any():
-    #     warnings.warn(
-    #         f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
-    #     )
+    if (df["count"] < 30).any():
+        warnings.warn(
+            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+        )
+    if label is not None:
+        df["label"] = label
     return df
 
 
@@ -163,6 +167,28 @@ def wls_cost(params, xdata, ydata, bin_counts, sigmas, nuggets):
     return weighted_least_squares(ydata, yfit, bin_counts)
 
 
+def composite_wls(params: np.array, df_comp: pd.DataFrame) -> np.float:
+    """Composite WLS cost function."""
+    sigmas = params[[0, -4]]
+    nuggets = params[[3, -1]]
+    df_comp["fit"] = np.nan
+    df_comp.loc[df_comp["label"] == "y1", "fit"] = matern_vario(
+        df_comp.loc[df_comp["label"] == "y1", "bin_center"].values, *params[:4]
+    )
+    df_comp.loc[df_comp["label"] == "y2", "fit"] = matern_vario(
+        df_comp.loc[df_comp["label"] == "y2", "bin_center"].values, *params[-4:]
+    )
+    df_comp.loc[df_comp["label"] == "cross", "fit"] = matern_cross_vario(
+        df_comp.loc[df_comp["label"] == "cross", "bin_center"].values,
+        sigmas,
+        nuggets,
+        *params[4:7],
+    )
+    return weighted_least_squares(
+        df_comp["bin_mean"].values, df_comp["fit"].values, df_comp["count"].values
+    )
+
+
 def fit_variogram_wls(
     xdata, ydata, bin_counts, initial_guess, sigmas=None, nuggets=None
 ):
@@ -208,7 +234,6 @@ def fit_variogram_wls(
         cov_fit = matern_cov(pred, *optim_result.x)
 
     if optim_result.success == False:
-        print("ERROR: optimization did not converge.")
         warnings.warn("ERROR: optimization did not converge.")
 
     return (
@@ -216,6 +241,46 @@ def fit_variogram_wls(
         pd.DataFrame({"lag": pred, "wls_fit": var_fit}),
         pd.DataFrame({"lag": pred, "wls_fit": cov_fit}),
     )
+
+
+def composite_fit(params: np.array, df_comp: pd.DataFrame) -> np.array:
+    """Composite WLS fits marginal and cross-semivariogram parameters simultaneously.
+    
+    Parameters:
+        params: initial guess [sigma_1, nu_1, len_scale_1, tau_1, nu_12, len_scale_12, rho_12, sigma_2, nu_2, len_scale_2, tau_2]
+        df_comp: labelled empirical (cross-) semivariograms stacked into a single dataframe
+    Returns:
+        optimal parameters
+    """
+    assert len(params) == 11
+    bounds_marg = [(SIG_L, SIG_U), (NU_L, NU_U), (LEN_L, LEN_U), (NUG_L, NUG_U)]
+    bounds_cross = [(NU_L, NU_U), (LEN_L, LEN_U), (RHO_L, RHO_U)]
+    bounds = bounds_marg + bounds_cross + bounds_marg
+    optim_result = minimize(
+        composite_wls, params, args=(df_comp), method="L-BFGS-B", bounds=bounds,
+    )
+    if optim_result.success == False:
+        warnings.warn("ERROR: optimization did not converge.")
+    return optim_result.x
+
+
+def composite_predict(params: np.array, df_comp: pd.DataFrame) -> tuple:
+    """Produces semivariogram and covariogram models using fitted parameters."""
+    sigmas = params[[0, -4]]
+    nuggets = params[[3, -1]]
+
+    pred = np.linspace(0, 1.1 * df_comp["bin_center"].max(), 100)
+    df_var = pd.DataFrame({"distance": pred})
+    df_cov = df_var.copy()
+
+    df_var["fit_1"] = matern_vario(pred, *params[:4])
+    df_cov["fit_1"] = matern_cov(pred, *params[:4])
+    df_var["fit_2"] = matern_vario(pred, *params[-4:])
+    df_cov["fit_2"] = matern_cov(pred, *params[-4:])
+    df_var["fit_cross"] = matern_cross_vario(pred, sigmas, nuggets, *params[4:7])
+    df_cov["fit_cross"] = matern_cross_cov(pred, sigmas, *params[4:7])
+
+    return df_var, df_cov
 
 
 def check_cauchyshwarz(covariograms, names):
@@ -238,18 +303,16 @@ def check_cauchyshwarz(covariograms, names):
 
 
 def variogram_analysis(
-    mf, cov_guesses, cross_guess, n_bins=20,
+    mf, params_guess, n_bins=50,
 ):
     """
     Compute the empirical spatial-only variograms from a multi-field object and find the weighted least squares fit.
     NOTE: 
     - data must have the same scale and the spatial mean is assumed to be zero
-    - coordinates are shifted longitudinally by 0.5-degrees to address location error with 'zero-distance'
 
     Parameters:
         mf: multi-field object
-        cov_guesses: covariance params initial guess for WLS fit; list [[sigma, nu, len_scale, nugget], [sigma, nu, len_scale, nugget]]
-        cross_guess: cross-cov parmas initial guess for WLS fit; list [nu, len_scale, rho]
+        params_guess: covariance params initial guess [sigma_1, nu_1, len_scale_1, tau_1, nu_12, len_scale_12, rho_12, sigma_2, nu_2, len_scale_2, tau_2]
         n_bins: number of bins into which point pairs are grouped for variogram estimates
 
     Returns:
@@ -266,33 +329,19 @@ def variogram_analysis(
         mf.field_1.coords, mf.field_2.coords, fast_dist=mf.fast_dist
     )
 
-    # Compute and fit semivariograms and covariograms
+    # Compute and semivariograms and covariograms
     variograms = dict()
     covariograms = dict()
-    params_fit = dict()
-    sigmas = list()
-    nuggets = list()
+    labels = ["y1", "y2"]
     for i, field in enumerate(fields):
         variograms[field.data_name] = empirical_variogram(
-            dists[i], field.values, n_bins=n_bins, covariogram=False,
+            dists[i], field.values, n_bins=n_bins, covariogram=False, label=labels[i]
         )
         covariograms[field.data_name] = empirical_variogram(
             dists[i], field.values, n_bins=n_bins, covariogram=True,
         )
-        # params_fit[name], var_fit, cov_fit = fit_variogram_wls(
-        #     variograms[name]["lag"],
-        #     variograms[name][name],
-        #     variograms[name]["counts"],
-        #     cov_guesses[i],
-        # )
-        # sigmas.append(params_fit[name][0])
-        # nuggets.append(params_fit[name][-1])
-        # variograms[name] = pd.merge(variograms[name], var_fit, on="lag", how="outer")
-        # covariograms[name] = pd.merge(
-        #     covariograms[name], cov_fit, on="lag", how="outer"
-        # )
 
-    # Compute and fit cross-semivariogram and cross-covariogram
+    # Compute cross-semivariogram and cross-covariogram
     cross_name = f"{fields[0].data_name}:{fields[1].data_name}"
     variograms[cross_name] = empirical_variogram(
         dist_cross,
@@ -300,6 +349,7 @@ def variogram_analysis(
         values2=fields[1].values,
         n_bins=n_bins,
         covariogram=False,
+        label="cross",
     )
     covariograms[cross_name] = empirical_variogram(
         dist_cross,
@@ -308,23 +358,14 @@ def variogram_analysis(
         n_bins=n_bins,
         covariogram=True,
     )
-    # params_fit[cross_name], var_fit, cov_fit = fit_variogram_wls(
-    #     variograms[cross_name]["lag"],
-    #     variograms[cross_name][cross_name],
-    #     variograms[cross_name]["counts"],
-    #     cross_guess,
-    #     sigmas=sigmas,
-    #     nuggets=nuggets,
-    # )
-    # variograms[cross_name] = pd.merge(
-    #     variograms[cross_name], var_fit, on="lag", how="outer"
-    # )
-    # covariograms[cross_name] = pd.merge(
-    #     covariograms[cross_name], cov_fit, on="lag", how="outer"
-    # )
+
+    # Fit model parameters and produce predicted values
+    df_comp = pd.concat(variograms.values())
+    params_fit = composite_fit(params_guess, df_comp)
+    variograms["fit"], covariograms["fit"] = composite_predict(params_fit, df_comp)
+
     # TODO: sort out how to handle different data and prediction domains
     # check_cauchyshwarz(variograms, names)
 
-    # return variograms, covariograms, params_fit
-    return variograms, covariograms, None
+    return variograms, covariograms, params_fit
 

@@ -183,7 +183,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
 
     da_xco2 = mf.field_1.ds.xco2
     da_sif = mf.field_2.ds.sif
-    extents = [-130, -60, 18, 60]
+    extents = [-125, -60, 18, 60]
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)

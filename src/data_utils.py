@@ -150,7 +150,7 @@ def regrid(ds=None, df=None, extents=None, grid_def=None):
     )
     if not bounds_check:
         warnings.warn(
-            "WARNING: dataset coordinates not within extents; may produce unexpected behavior."
+            f"dataset coordinates not within extents; may produce unexpected behavior: [{df.lon.min()}, {df.lon.max()}, {df.lat.min()}, {df.lat.max()}]"
         )
     # overwrite lon-lat values with grid values
     df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
@@ -204,7 +204,7 @@ def apply_land_mask(df, extents=None, grid_def=None):
     )
 
 
-def prep_gridded_df(ds, extents=None, grid_def=None):
+def prep_gridded_df(ds, extents=None, grid_def=None, aggregate=True):
     """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America (land only). Return as data frame."""
     lon_lwr, lon_upr, lat_lwr, lat_upr = prep_extents(extents, grid_def)
     df = ds.to_dataframe()
@@ -217,7 +217,8 @@ def prep_gridded_df(ds, extents=None, grid_def=None):
     # drop data outside domain extents so it's not included in edge bin averages
     df = df.loc[bounds].reset_index()
     df_grid = regrid(df=df, extents=extents, grid_def=grid_def)
-    df_grid = monthly_avg(df_grid)
+    if aggregate:
+        df_grid = monthly_avg(df_grid)
     return apply_land_mask(df_grid, extents, grid_def)
 
 
@@ -271,6 +272,19 @@ def get_main_coords(ds, lon_centers, lat_centers):
         .merge(pd.DataFrame({"lon": lon_centers}), on="lon", how="inner")
         .set_index(["lon", "lat", "time"])
         .to_xarray()
+    )
+
+
+def produce_climatology_conus(ds, freq) -> pd.DataFrame:
+    extents = [-125, -65, 22, 58]
+    grid_def = set_grid_def(lon_res=5, lat_res=4)
+    return (
+        prep_gridded_df(ds, extents=extents, grid_def=grid_def, aggregate=False)
+        .dropna(subset=["lon", "lat"])
+        .drop(columns=["lon", "lat"])
+        .groupby(pd.Grouper(key="time", freq=freq))
+        .mean()
+        .reset_index()
     )
 
 

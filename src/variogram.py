@@ -9,16 +9,16 @@ from scipy.optimize import minimize
 from spatial_tools import distance_matrix
 
 # TODO: establish a variogram class
-SIG_L = 0.2
-SIG_U = 0.9
+SIG_L = 0.8
+SIG_U = 1.4
 NU_L = 0.2
 NU_U = 3.5
-LEN_L = 500
+LEN_L = 1e2
 LEN_U = 1e3
-NUG_L = 0.35
-NUG_U = 0.8
+NUG_L = 0.0
+NUG_U = 0.1
 RHO_L = -1.0
-RHO_U = -0.7
+RHO_U = -0.1
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -269,7 +269,7 @@ def composite_predict(params: np.array, df_comp: pd.DataFrame) -> tuple:
     sigmas = params[[0, -4]]
     nuggets = params[[3, -1]]
 
-    pred = np.linspace(0, 1.1 * df_comp["bin_center"].max(), 100)
+    pred = np.linspace(0, df_comp["bin_center"].max(), 100)
     df_var = pd.DataFrame({"distance": pred})
     df_cov = df_var.copy()
 
@@ -360,9 +360,12 @@ def variogram_analysis(
     )
 
     # Fit model parameters and produce predicted values
-    df_comp = pd.concat(variograms.values())
-    params_fit = composite_fit(params_guess, df_comp)
-    variograms["fit"], covariograms["fit"] = composite_predict(params_fit, df_comp)
+    if params_guess is not None:
+        df_comp = pd.concat(variograms.values())
+        params_fit = composite_fit(params_guess, df_comp)
+        variograms["fit"], covariograms["fit"] = composite_predict(params_fit, df_comp)
+    else:
+        params_fit = None
 
     # TODO: sort out how to handle different data and prediction domains
     # check_cauchyshwarz(variograms, names)

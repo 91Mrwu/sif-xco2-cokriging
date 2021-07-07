@@ -9,6 +9,7 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+import cartopy.mpl.ticker as cticker
 
 from data_utils import set_main_coords, get_main_coords
 
@@ -19,7 +20,9 @@ LINEWIDTH = 4
 ALPHA = 0.6
 
 
-def set_gridlines(ax):
+def prep_axes(ax, extents):
+    ax.coastlines()
+    ax.set_extent(extents)
     gl = ax.gridlines(
         crs=ccrs.PlateCarree(),
         linewidth=0.8,
@@ -29,14 +32,28 @@ def set_gridlines(ax):
         draw_labels=True,
     )
     gl.top_labels = False
+    gl.bottom_labels = True
     gl.left_labels = True
     gl.right_labels = False
     gl.xlines = True
     gl.ylines = True
-    gl.xlocator = mticker.FixedLocator([-120, -100, -80, -60])
+    gl.xlocator = mticker.FixedLocator([-120, -100, -80, -60.0])
     gl.ylocator = mticker.FixedLocator([30, 50])
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
+
+
+# def set_gridlines_new(ax):
+#     ax.set_xticks([-120.0, -100.0, -80.0, -60.0], crs=ccrs.PlateCarree())
+#     ax.set_xticklabels([-120.0, -100.0, -80.0, -60.0])
+#     ax.set_yticks([30.0, 50.0], crs=ccrs.PlateCarree())
+#     ax.set_yticklabels([30.0, 50.0])
+
+#     lon_formatter = cticker.LongitudeFormatter()
+#     lat_formatter = cticker.LatitudeFormatter()
+#     ax.xaxis.set_major_formatter(lon_formatter)
+#     ax.yaxis.set_major_formatter(lat_formatter)
+#     ax.grid(linewidth=0.8, color="black", alpha=0.5, linestyle="--")
 
 
 def plot_da(
@@ -110,6 +127,7 @@ def raw_climatology(df, title, filename=None):
     # Add titles
     ax_r1.set_ylabel("SIF 740nm [W/m$^2$/sr/$\mu$m]", size=12)
     ax.set_ylabel("XCO$_2$ [ppm]", size=12)
+    ax.set_xlabel("Time", size=12)
     ax.set_title(title, size=12)
 
     if filename:
@@ -212,35 +230,41 @@ def resid_coord_avg(mf, axes=None, filename=None):
 
 def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
-    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
+    # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
+    PROJ = ccrs.PlateCarree()
+    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
-    extents = [-125, -60, 18, 60]
+    extents = [-130, -60, 18, 60]
     lon_centers, lat_centers = set_main_coords()
-    da_xco2 = get_main_coords(mf.field_1.ds, lon_centers, lat_centers).sel(
-        time=mf.field_1.timestamp
-    )["xco2"]
-    da_sif = get_main_coords(mf.field_2.ds, lon_centers, lat_centers).sel(
-        time=mf.field_2.timestamp
-    )["sif"]
+    da_xco2 = (
+        get_main_coords(mf.field_1.ds, lon_centers, lat_centers)
+        .sel(time=mf.field_1.timestamp)["xco2"]
+        .rename({"lon": "Longitude", "lat": "Latitude"})
+    )
+    da_sif = (
+        get_main_coords(mf.field_2.ds, lon_centers, lat_centers)
+        .sel(time=mf.field_2.timestamp)["sif"]
+        .rename({"lon": "Longitude", "lat": "Latitude"})
+    )
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
         # gs = f_axs[0, 0].get_gridspec()
         # for ax in f_axs[0, 0:]:
         #     ax.remove()
-        # ax1 = fig.add_subplot(gs[0, 0], projection=ccrs.EqualEarth())
-        # ax2 = fig.add_subplot(gs[0, 1], projection=ccrs.EqualEarth())
+        # ax1 = fig.add_subplot(gs[0, 0], projection=PROJ)
+        # ax2 = fig.add_subplot(gs[0, 1], projection=PROJ)
         fig = plt.figure(figsize=(20, 12))
         gs = fig.add_gridspec(80, 100)
-        ax1 = fig.add_subplot(gs[0:50, 0:49], projection=ccrs.EqualEarth())
-        ax2 = fig.add_subplot(gs[0:50, 51:100], projection=ccrs.EqualEarth())
+        ax1 = fig.add_subplot(gs[0:50, 0:49], projection=PROJ)
+        ax2 = fig.add_subplot(gs[0:50, 51:100], projection=PROJ)
         axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
         fig.suptitle(title, size=14, y=0.95)
     else:
-        fig = plt.figure(figsize=(18, 6))
+        fig = plt.figure(figsize=(20, 5))
         gs = fig.add_gridspec(100, 100)
-        ax1 = fig.add_subplot(gs[:, 0:49], projection=ccrs.EqualEarth())
-        ax2 = fig.add_subplot(gs[:, 51:100], projection=ccrs.EqualEarth())
+        ax1 = fig.add_subplot(gs[:, 0:51], projection=PROJ)
+        ax2 = fig.add_subplot(gs[:, 49:100], projection=PROJ)
         fig.suptitle(title, size=14)
 
     xr.plot.imshow(
@@ -252,12 +276,6 @@ def plot_fields(mf, coord_avg=False, filename=None):
         center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
-    ax1.coastlines()
-    ax1.set_extent(extents)
-    ax1.set_title(
-        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=14
-    )
-
     xr.plot.imshow(
         darray=da_sif.T,
         transform=ccrs.PlateCarree(),
@@ -267,28 +285,24 @@ def plot_fields(mf, coord_avg=False, filename=None):
         center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
-    ax2.coastlines()
-    ax2.set_extent(extents)
+
+    for ax in [ax1, ax2]:
+        # set_gridlines_new(ax)
+        prep_axes(ax, extents)
+
+    ax1.set_title(
+        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=14
+    )
     ax2.set_title(
         f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=14
     )
-    for ax in [ax1, ax2]:
-        set_gridlines(ax)
 
     if coord_avg:
         # resid_coord_avg(mf, f_axs[1, 0:])
         resid_coord_avg(mf, axes)
 
     if filename:
-        fig.savefig(f"../plots/{filename}.png", dpi=200)
-
-
-# def param_labels(params, cross=False):
-#     p = np.round_(params, decimals=3)
-#     if cross:
-#         return f"nu: {p[0]}\nlen_scale: {p[1]}\nrho: {p[2]}"
-#     else:
-#         return f"sigma: {p[0]}\n nu: {p[1]}\n len_scale: {p[2]}\n nugget: {p[3]}"
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
 def param_labels(params):
@@ -301,184 +315,80 @@ def param_labels(params):
 
 def plot_model(df_fit, params, ax):
     labels = param_labels(params)
-    for i, fname in enumerate(["fit_1", "fit_2"]):
-        ax[i, i].plot(
+    for i, fname in enumerate(["fit_1", "fit_cross", "fit_2"]):
+        ax[i].plot(
             df_fit["distance"],
             df_fit[fname],
             linestyle="--",
             color="black",
             label="Fitted model",
         )
-        ax[i, i].text(
-            0.95,
-            0.05,
-            labels[fname],
-            transform=ax[i, i].transAxes,
-            ha="right",
-            va="bottom",
-        )
-    ax[1, 0].plot(
-        df_fit["distance"],
-        df_fit["fit_cross"],
-        linestyle="--",
-        color="black",
-        label="Fitted model",
-    )
-    ax[1, 0].text(
+        if i != 1:
+            ax[i].text(
+                0.95,
+                0.05,
+                labels[fname],
+                transform=ax[i].transAxes,
+                ha="right",
+                va="bottom",
+            )
+    ax[1].text(
         0.05,
         0.05,
         labels["fit_cross"],
-        transform=ax[1, 0].transAxes,
+        transform=ax[1].transAxes,
         ha="left",
         va="bottom",
     )
 
 
-def plot_semivariograms(vario_res, timestamp, timedelta, params=None, filename=None):
-    fig, ax = plt.subplots(2, 2, figsize=(12, 9), constrained_layout=True, sharex=True)
-    ax[0, 1].axis("off")
+def plot_variograms(
+    res_obj,
+    timestamp,
+    timedelta,
+    params=None,
+    type_lab="Semivariogram",
+    scale_lab="Semivariance",
+    filename=None,
+):
+    fig, ax = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
-    lags = vario_res["xco2"]["bin_center"].values
+    lags = res_obj["xco2"]["bin_center"].values
     bin_width = lags[2] - lags[1]
 
-    for i, var in enumerate(["xco2", "sif"]):
-        df = vario_res[var]
+    for i, var in enumerate(["xco2", "xco2:sif", "sif"]):
+        df = res_obj[var]
         df.plot(
             x="bin_center",
             y="bin_mean",
             kind="scatter",
-            # color="white",
             color="black",
             alpha=0.8,
-            ax=ax[i, i],
-            label="Empirical semivariogram",
+            ax=ax[i],
+            label=f"Empirical {type_lab.lower()}",
         )
-        # for j, txt in enumerate(df["count"]):
-        #     ax[i, i].annotate(
-        #         np.int(txt),
-        #         (df.bin_center.values[j], df.bin_mean.values[j]),
-        #         xytext=(0, 0),
-        #         textcoords="offset points",
-        #         ha="center",
-        #         fontsize=10,
-        #     )
-        ax[i, i].set_ylim(bottom=0)
-        ax[i, i].set_title(var, fontsize=12)
-        ax[i, i].set_ylabel("Semivariance", fontsize=12)
-        ax[i, i].set_xlabel("Separation distance (km)", fontsize=12)
-        ax[i, i].legend(loc="upper left")
+        if i == 1:
+            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=12)
+        else:
+            ax[i].set_ylabel(scale_lab, fontsize=12)
+            if scale_lab.lower() != "covariance":
+                ax[i].set_ylim(bottom=0)
+        ax[i].set_title(var, fontsize=12)
+        ax[i].set_xlabel("Separation distance (km)", fontsize=12)
+        ax[i].legend()
 
-    df = vario_res["xco2:sif"]
-    df.plot(
-        x="bin_center",
-        y="bin_mean",
-        kind="scatter",
-        # color="white",
-        color="black",
-        alpha=0.8,
-        ax=ax[1, 0],
-        label="Empirical cross-semivariogram",
-    )
-    # for j, txt in enumerate(df["count"]):
-    #     ax[1, 0].annotate(
-    #         np.int(txt),
-    #         (df.bin_center.values[j], df.bin_mean.values[j]),
-    #         xytext=(0, 0),
-    #         textcoords="offset points",
-    #         ha="center",
-    #         fontsize=10,
-    #     )
-    ax[1, 0].set_ylabel("Semivariance", fontsize=12)
-    ax[1, 0].set_xlabel("Separation distance (km)", fontsize=12)
+    if "fit" in res_obj.keys() and params is not None:
+        plot_model(res_obj["fit"], params, ax)
 
-    if "fit" in vario_res.keys() and params is not None:
-        plot_model(vario_res["fit"], params, ax)
-
-    ax[0, 0].set_title("Semivariogram: XCO$_2$", fontsize=12)
-    ax[1, 0].set_title(
-        f"Cross-semivariogram: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
+    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=12)
+    ax[1].set_title(
+        f"Cross-{type_lab.lower()}: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
         fontsize=12,
     )
-    ax[1, 1].set_title("Semivariogram: SIF", fontsize=12)
+    ax[2].set_title(f"{type_lab}: SIF", fontsize=12)
 
     fig.suptitle(
-        f"Semivariograms and cross-semivariogram for XCO$_2$ and SIF residuals\n {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
-        fontsize=14,
-    )
-
-    if filename:
-        fig.savefig(f"../plots/{filename}.png", dpi=100)
-
-
-def plot_covariograms(covario_res, timestamp, timedelta, params=None, filename=None):
-    fig, ax = plt.subplots(2, 2, figsize=(12, 9), constrained_layout=True, sharex=True)
-    ax[0, 1].axis("off")
-
-    lags = covario_res["xco2"]["bin_center"].values
-    bin_width = lags[2] - lags[1]
-
-    for i, var in enumerate(["xco2", "sif"]):
-        df = covario_res[var]
-        df.plot(
-            x="bin_center",
-            y="bin_mean",
-            kind="scatter",
-            # color="white",
-            color="black",
-            alpha=0.8,
-            ax=ax[i, i],
-            label="Empirical covariogram",
-        )
-        # for j, txt in enumerate(df["count"]):
-        #     ax[i, i].annotate(
-        #         np.int(txt),
-        #         (df.bin_center.values[j], df.bin_mean.values[j]),
-        #         xytext=(0, 0),
-        #         textcoords="offset points",
-        #         ha="center",
-        #         fontsize=10,
-        #     )
-        ax[i, i].set_title(var, fontsize=12)
-        ax[i, i].set_ylabel("Covariance", fontsize=12)
-        ax[i, i].set_xlabel("Separation distance (km)", fontsize=12)
-        ax[i, i].legend()
-
-    df = covario_res["xco2:sif"]
-    df.plot(
-        x="bin_center",
-        y="bin_mean",
-        kind="scatter",
-        # color="white",
-        color="black",
-        alpha=0.8,
-        ax=ax[1, 0],
-        label="Empirical cross-covariogram",
-    )
-    # for j, txt in enumerate(df["count"]):
-    #     ax[1, 0].annotate(
-    #         np.int(txt),
-    #         (df.bin_center.values[j], df.bin_mean.values[j]),
-    #         xytext=(0, 0),
-    #         textcoords="offset points",
-    #         ha="center",
-    #         fontsize=10,
-    #     )
-    ax[1, 0].legend(loc="upper left")
-    ax[1, 0].set_ylabel("Cross-covariance", fontsize=12)
-    ax[1, 0].set_xlabel("Separation distance (km)", fontsize=12)
-
-    if "fit" in covario_res.keys() and params is not None:
-        plot_model(covario_res["fit"], params, ax)
-
-    ax[0, 0].set_title("Covariogram: XCO$_2$", fontsize=12)
-    ax[1, 0].set_title(
-        f"Cross-covariogram: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
-        fontsize=12,
-    )
-    ax[1, 1].set_title("Covariogram: SIF", fontsize=12)
-
-    fig.suptitle(
-        f"Covariograms and cross-covariogram for XCO$_2$ and SIF residuals\n {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
+        f"{type_lab}s and cross-{type_lab.lower()} for XCO$_2$ and SIF residuals\n {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
         fontsize=14,
     )
 

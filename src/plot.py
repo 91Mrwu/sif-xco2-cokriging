@@ -10,6 +10,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import cartopy.mpl.ticker as cticker
+from cmcrameri import cm
 
 from data_utils import set_main_coords, get_main_coords
 
@@ -41,6 +42,8 @@ def prep_axes(ax, extents):
     gl.ylocator = mticker.FixedLocator([30, 50])
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
+    # gl.xlabel_style = {"size": 14}
+    # gl.ylabel_style = {"size": 14}
 
 
 # def set_gridlines_new(ax):
@@ -129,6 +132,9 @@ def raw_climatology(df, title, filename=None):
     ax.set_ylabel("XCO$_2$ [ppm]", size=12)
     ax.set_xlabel("Time", size=12)
     ax.set_title(title, size=12)
+    # plt.setp(ax.spines.values(), color="white")
+    # plt.setp(ax_r1.spines.values(), color="white")
+    plt.tight_layout()
 
     if filename:
         plt.savefig(f"../plots/{filename}.png", dpi=200)
@@ -232,6 +238,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
     # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
     PROJ = ccrs.PlateCarree()
+    CMAP = cm.roma
     title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
     extents = [-130, -60, 18, 60]
@@ -262,16 +269,19 @@ def plot_fields(mf, coord_avg=False, filename=None):
         fig.suptitle(title, size=14, y=0.95)
     else:
         fig = plt.figure(figsize=(20, 5))
-        gs = fig.add_gridspec(100, 100)
-        ax1 = fig.add_subplot(gs[:, 0:51], projection=PROJ)
-        ax2 = fig.add_subplot(gs[:, 49:100], projection=PROJ)
+        # gs = fig.add_gridspec(100, 100)
+        # ax1 = fig.add_subplot(gs[:, 0:52], projection=PROJ)
+        # ax2 = fig.add_subplot(gs[:, 48:100], projection=PROJ)
         fig.suptitle(title, size=14)
+        fig, (ax1, ax2) = plt.subplots(
+            1, 2, figsize=(10, 10), subplot_kw={"projection": PROJ}
+        )
 
     xr.plot.imshow(
         darray=da_xco2.T,
         transform=ccrs.PlateCarree(),
         ax=ax1,
-        cmap="jet",
+        cmap=CMAP,
         vmin=-2,
         center=0,
         cbar_kwargs={"label": "Process residuals"},
@@ -280,7 +290,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         darray=da_sif.T,
         transform=ccrs.PlateCarree(),
         ax=ax2,
-        cmap="jet",
+        cmap=CMAP,
         vmin=-2,
         center=0,
         cbar_kwargs={"label": "Process residuals"},
@@ -291,10 +301,10 @@ def plot_fields(mf, coord_avg=False, filename=None):
         prep_axes(ax, extents)
 
     ax1.set_title(
-        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=14
+        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=24
     )
     ax2.set_title(
-        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=14
+        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=24
     )
 
     if coord_avg:
@@ -331,6 +341,7 @@ def plot_model(df_fit, params, ax):
                 transform=ax[i].transAxes,
                 ha="right",
                 va="bottom",
+                size=14,
             )
     ax[1].text(
         0.05,
@@ -339,6 +350,7 @@ def plot_model(df_fit, params, ax):
         transform=ax[1].transAxes,
         ha="left",
         va="bottom",
+        size=14,
     )
 
 
@@ -368,24 +380,25 @@ def plot_variograms(
             label=f"Empirical {type_lab.lower()}",
         )
         if i == 1:
-            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=12)
+            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=14)
         else:
-            ax[i].set_ylabel(scale_lab, fontsize=12)
+            ax[i].set_ylabel(scale_lab, fontsize=14)
             if scale_lab.lower() != "covariance":
                 ax[i].set_ylim(bottom=0)
-        ax[i].set_title(var, fontsize=12)
-        ax[i].set_xlabel("Separation distance (km)", fontsize=12)
+        ax[i].set_title(var, fontsize=14)
+        ax[i].set_xlabel("Separation distance (km)", fontsize=14)
         ax[i].legend()
+        ax[i].tick_params(axis="both", which="major", labelsize=12)
 
     if "fit" in res_obj.keys() and params is not None:
         plot_model(res_obj["fit"], params, ax)
 
-    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=12)
+    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=14)
     ax[1].set_title(
         f"Cross-{type_lab.lower()}: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
-        fontsize=12,
+        fontsize=14,
     )
-    ax[2].set_title(f"{type_lab}: SIF", fontsize=12)
+    ax[2].set_title(f"{type_lab}: SIF", fontsize=14)
 
     fig.suptitle(
         f"{type_lab}s and cross-{type_lab.lower()} for XCO$_2$ and SIF residuals\n {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",

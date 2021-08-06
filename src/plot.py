@@ -268,22 +268,22 @@ def plot_fields(mf, coord_avg=False, filename=None):
         axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
         fig.suptitle(title, size=14, y=0.95)
     else:
-        fig = plt.figure(figsize=(20, 5))
+        # fig = plt.figure(figsize=(20, 5))
         # gs = fig.add_gridspec(100, 100)
         # ax1 = fig.add_subplot(gs[:, 0:52], projection=PROJ)
         # ax2 = fig.add_subplot(gs[:, 48:100], projection=PROJ)
-        fig.suptitle(title, size=14)
         fig, (ax1, ax2) = plt.subplots(
-            1, 2, figsize=(10, 10), subplot_kw={"projection": PROJ}
+            1, 2, figsize=(14, 4), subplot_kw={"projection": PROJ}
         )
+        fig.suptitle(title, size=12)
 
     xr.plot.imshow(
         darray=da_xco2.T,
         transform=ccrs.PlateCarree(),
         ax=ax1,
         cmap=CMAP,
-        vmin=-2,
-        center=0,
+        # vmin=-2,
+        # center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
     xr.plot.imshow(
@@ -291,8 +291,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
         transform=ccrs.PlateCarree(),
         ax=ax2,
         cmap=CMAP,
-        vmin=-2,
-        center=0,
+        # vmin=-2,
+        # center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
 
@@ -301,10 +301,10 @@ def plot_fields(mf, coord_avg=False, filename=None):
         prep_axes(ax, extents)
 
     ax1.set_title(
-        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=24
+        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=12
     )
     ax2.set_title(
-        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=24
+        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=12
     )
 
     if coord_avg:

@@ -59,7 +59,7 @@ def preprocess_ds(ds, timestamp):
 
     # Remove the OLS mean surface
     ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name)
-    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
+    # ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
 
     # Rescale the data
     # ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
@@ -68,7 +68,7 @@ def preprocess_ds(ds, timestamp):
     # Divide by custom standard dev. calculated from residuals at all spatial locations
     # ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
     ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
-    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+    # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return
     return ds_field
@@ -99,11 +99,12 @@ class Field:
                 {
                     "lat": self.coords[:, 0],
                     "lon": self.coords[:, 1],
-                    "values": self.values,
+                    self.data_name: self.values,
                 }
             )
             .set_index(["lon", "lat"])
             .to_xarray()
+            .assign_coords({"time": np.array(self.timestamp, dtype=np.datetime64)})
         )
 
     # def get_spatial_df(self):

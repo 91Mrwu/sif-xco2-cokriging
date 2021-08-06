@@ -198,7 +198,7 @@ dmypy.json
 cython_debug/
 
 # Dask
-dask-worker-space/
+dask-worker-space
 
 ##
 # VS Code: see https://github.com/github/gitignore/blob/master/Global/VisualStudioCode.gitignore
@@ -212,5 +212,6 @@ dask-worker-space/
 *.code-workspace
 
 # Local History for Visual Studio Code
-.history/
+.history
+.history/*
 packrat/lib*/

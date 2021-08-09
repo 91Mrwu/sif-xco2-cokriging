@@ -2,35 +2,37 @@ name: conda-env
 channels:
   - defaults
   - conda-forge
-  - r
+  # - r
 dependencies:
-# R tools
-  - r-essentials
-  - r-base
-  - r-tidyverse
-  - rstudio
-# Core python
+  # R tools
+  # - r-essentials
+  # - r-base
+  # - r-tidyverse
+  # - rstudio
+  # Core python
   - jupyter
   - jupyterlab
-  - jupyterlab-git
+  # - jupyterlab-git
   - numpy
   - numba
   - pandas
   - scipy
-# Data management
+  # Science tools
+  - geopy
+  - regionmask
+  # Data management
   - xarray
   - dask
   - netcdf4
   - h5netcdf
-# Statistics / ML
-  - pytorch
+  # Statistics / ML
+  # - pytorch
   - scikit-learn
   - statsmodels
-  - geopy
-  - gstools
-# Plotting
+  # Plotting
   - matplotlib
   - seaborn
   - cartopy
   - ffmpeg
   - palettable
+  - cmcrameri

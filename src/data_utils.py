@@ -1,5 +1,6 @@
 # Utilities for reading, writing, and formatting data
 import warnings
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -77,6 +78,19 @@ def prep_xco2(ds):
             "lon": (["time"], ds.longitude),
             "lat": (["time"], ds.latitude),
             "time": ds.time.values,
+        },
+    )
+
+
+def prep_evi(ds):
+    """Preprocess a MODIS EVI dataset."""
+    data_name = "CMG 0.05 Deg Monthly EVI"
+    return xr.Dataset(
+        {"evi": (["lon", "lat"], ds[data_name].squeeze().T.values)},
+        coords={
+            "lon": (["lon"], ds.x.values),
+            "lat": (["lat"], ds.y.values),
+            "time": datetime.fromisoformat(ds.RANGEBEGINNINGDATE),
         },
     )
 
@@ -207,7 +221,7 @@ def apply_land_mask(df, extents=None, grid_def=None):
 def prep_gridded_df(ds, extents=None, grid_def=None, aggregate=True):
     """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America (land only). Return as data frame."""
     lon_lwr, lon_upr, lat_lwr, lat_upr = prep_extents(extents, grid_def)
-    df = ds.to_dataframe()
+    df = ds.to_dataframe().reset_index()
     bounds = (
         (df.lon >= lon_lwr)
         & (df.lon <= lon_upr)
@@ -217,6 +231,8 @@ def prep_gridded_df(ds, extents=None, grid_def=None, aggregate=True):
     # drop data outside domain extents so it's not included in edge bin averages
     df = df.loc[bounds].reset_index()
     df_grid = regrid(df=df, extents=extents, grid_def=grid_def)
+    if "index" in df_grid.columns:
+        df_grid = df_grid.drop(columns="index")
     if aggregate:
         df_grid = monthly_avg(df_grid)
     return apply_land_mask(df_grid, extents, grid_def)

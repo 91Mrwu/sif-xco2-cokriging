@@ -1,0 +1,10 @@
+# Use this environment for reading and processing raw OCO-2 Lite files and EVI files
+name: geopy
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - rasterio
+  - xarray
+  - rioxarray
+  - ipykernel

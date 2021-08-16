@@ -11,7 +11,7 @@ dependencies:
   # - rstudio
   # Core python
   - jupyter
-  - jupyterlab
+  # - jupyterlab
   # - jupyterlab-git
   - numpy
   - numba
@@ -22,11 +22,9 @@ dependencies:
   - regionmask
   # Data management
   - xarray
-  - dask
   - netcdf4
   - h5netcdf
   # Statistics / ML
-  # - pytorch
   - scikit-learn
   - statsmodels
   # Plotting
@@ -34,5 +32,5 @@ dependencies:
   - seaborn
   - cartopy
   - ffmpeg
-  - palettable
+  # - palettable
   - cmcrameri

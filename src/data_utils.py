@@ -85,12 +85,14 @@ def prep_xco2(ds):
 def prep_evi(ds):
     """Preprocess a MODIS EVI dataset."""
     data_name = "CMG 0.05 Deg Monthly EVI"
+    extents = [-130, 18, -60, 62] # [minx, miny, maxx, maxy]
+    ds_clip = ds.rio.clip_box(*extents)
     return xr.Dataset(
-        {"evi": (["lon", "lat"], ds[data_name].squeeze().T.values)},
+        {"evi": (["lon", "lat"], ds_clip[data_name].squeeze().T.values)},
         coords={
-            "lon": (["lon"], ds.x.values),
-            "lat": (["lat"], ds.y.values),
-            "time": datetime.fromisoformat(ds.RANGEBEGINNINGDATE),
+            "lon": (["lon"], ds_clip.x.values),
+            "lat": (["lat"], ds_clip.y.values),
+            "time": datetime.fromisoformat(ds_clip.RANGEBEGINNINGDATE),
         },
     )
 

@@ -6,9 +6,12 @@ from sklearn.linear_model import LinearRegression
 
 
 ## Generic stats
-def standardize(x):
+def standardize(x, unique=False):
     """Stadardize the elements of the input vector (based on unique elements)."""
-    return (x - np.unique(x).mean()) / np.unique(x).std()
+    if unique:
+        return (x - np.unique(x).mean()) / np.unique(x).std()
+    else:
+        return (x - x.mean()) / x.std()
 
 
 ## Counts / replications
@@ -118,7 +121,7 @@ def compute_xcor_1d(v1, v2, lag=0, tau=None):
     # remove the mean along time dim
     x = v1_m - v1_m.mean()
     y = v2_m - v2_m.mean()
-    if lag is not 0:
+    if lag != 0:
         # truncate along time dim at appropriate position to apply lag
         x = x[lag:]
         y = y[:-lag]
@@ -228,8 +231,14 @@ def optim_lag_nd(da1, da2, lag_bnds, tau=None):
 
     # return data set with arrays optimal lag and corresponding xcor for each element
     return xarray.Dataset(
-        {"optim_lag": (["lon", "lat"], optim_lag), "xcor": (["lon", "lat"], xcor),},
-        coords={"lon": da1.lon, "lat": da1.lat,},
+        {
+            "optim_lag": (["lon", "lat"], optim_lag),
+            "xcor": (["lon", "lat"], xcor),
+        },
+        coords={
+            "lon": da1.lon,
+            "lat": da1.lat,
+        },
     )
 
 
@@ -269,4 +278,3 @@ def get_stats_df(df_group, lags=[0], tau=None):
         df[f"xcor_lag{lag}"] = compute_xcor_1d(xco2_resid, sif_resid, lag=lag, tau=tau)
 
     return df
-

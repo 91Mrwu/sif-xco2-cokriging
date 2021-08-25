@@ -3,6 +3,7 @@ from dateutil.relativedelta import relativedelta
 
 import numpy as np
 import pandas as pd
+
 # import xarray as xr
 
 import spatial_tools
@@ -80,7 +81,7 @@ class Field:
     Stores data values and coordinates for a single process at a fixed time in a data frame.
     """
 
-    def __init__(self, ds, timestamp):
+    def __init__(self, ds, timestamp, covariates=None):
         self.timestamp = timestamp
         self.data_name, self.var_name = get_field_names(ds)
         ds_prep = preprocess_ds(ds, timestamp)
@@ -91,6 +92,8 @@ class Field:
         self.spatial_mean = df["spatial_mean"].values
         self.scale_fact = ds_prep.attrs["scale_fact"]
         self.variance_estimate = df[self.var_name].values
+        if covariates is not None:
+            self.covariates = df[covariates]
 
     def to_xarray(self):
         """Converts the field to an xarray dataset."""
@@ -137,7 +140,15 @@ class MultiField:
     """
 
     def __init__(
-        self, ds_1, ds_2, timestamp, timedelta=0, dist_units="km", fast_dist=False
+        self,
+        ds_1,
+        ds_2,
+        timestamp,
+        timedelta=0,
+        dist_units="km",
+        fast_dist=False,
+        covars_1=None,
+        covars_2=None,
     ):
         self.timestamp = np.datetime_as_string(timestamp, unit="D")
         self.timedelta = timedelta
@@ -145,8 +156,8 @@ class MultiField:
         self.fast_dist = fast_dist
         self.ds_1 = ds_1
         self.ds_2 = ds_2
-        self.field_1 = Field(ds_1, timestamp)
-        self.field_2 = Field(ds_2, self._apply_timedelta())
+        self.field_1 = Field(ds_1, timestamp, covariates=covars_1)
+        self.field_2 = Field(ds_2, self._apply_timedelta(), covariates=covars_2)
         self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
         # self.joint_std_inverse = np.float_power(
         #     np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1

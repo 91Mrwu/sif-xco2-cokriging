@@ -15,8 +15,8 @@ TODO:
 ## Reading
 def prep_sif(ds):
     """Preprocess an OCO-2 SIF Lite file.
-    
-    NOTE: 
+
+    NOTE:
     SIF_Uncertainty_740nm is defined as "estimated 1-sigma uncertainty of Solar Induced Fluorescence at 740 nm. Uncertainty computed from continuum level radiance at 740 nm." Squaring this value yeilds the variance of the measurement error which will be added to the diagonals of the covariance matrix.
     """
 
@@ -52,8 +52,8 @@ def prep_sif(ds):
 
 def prep_xco2(ds):
     """Preprocess an OCO-2 FP Lite file.
-    
-    NOTE: 
+
+    NOTE:
     xco2_uncertainty is defined as "the posterior uncertainty in XCO2 calculated by the L2 algorithm, in ppm. This is generally 30-50% smaller than the true retrieval uncertainty." Doubling this value yields a conservative estimate of the variance of the measurement error which will be added to the diagonals of the covariance matrix.
     """
 
@@ -85,7 +85,7 @@ def prep_xco2(ds):
 def prep_evi(ds):
     """Preprocess a MODIS EVI dataset."""
     data_name = "CMG 0.05 Deg Monthly EVI"
-    extents = [-130, 18, -60, 62] # [minx, miny, maxx, maxy]
+    extents = [-130, 18, -60, 62]  # [minx, miny, maxx, maxy]
     ds_clip = ds.rio.clip_box(*extents)
     return xr.Dataset(
         {"evi": (["lon", "lat"], ds_clip[data_name].squeeze().T.values)},
@@ -166,7 +166,8 @@ def regrid(ds=None, df=None, extents=None, grid_def=None):
     )
     if not bounds_check:
         warnings.warn(
-            f"dataset coordinates not within extents; may produce unexpected behavior: [{df.lon.min()}, {df.lon.max()}, {df.lat.min()}, {df.lat.max()}]"
+            "dataset coordinates not within extents; may produce unexpected behavior:"
+            f" [{df.lon.min()}, {df.lon.max()}, {df.lat.min()}, {df.lat.max()}]"
         )
     # overwrite lon-lat values with grid values
     df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
@@ -274,15 +275,17 @@ def set_main_coords(extents=None, lon_res=5, lat_res=4):
     return lon_centers, lat_centers
 
 
-def get_main_coords(ds, lon_centers, lat_centers):
-    """
-    Returns the data array with base longitudinal coordinates only.
-    Parameters: 
-        - xarray dataset
+def get_main_coords(ds, lon_centers=None, lat_centers=None):
+    """Returns the data array with base longitudinal coordinates only.
+    Parameters:
+        - xarray dataset or data array
         - numpy array
-    Returns: 
+        - numpy array
+    Returns:
         - xarray dataset
     """
+    if lon_centers is None or lat_centers is None:
+        lon_centers, lat_centers = set_main_coords()
     return (
         ds.to_dataframe()
         .reset_index()
@@ -327,7 +330,7 @@ def map_transcom(ds, ds_tc):
 
 def to_xarray(coords, **kwargs):
     """Format data variables as xarray data array or dataset.
-    
+
     NOTE: coords must be formatted in rows as [[lat, lon]].
     """
     return (

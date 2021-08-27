@@ -59,17 +59,21 @@ def preprocess_ds(ds, timestamp):
     ds_field.attrs["temporal_fit"] = ds_field["temporal_trend"].values
 
     # Remove the OLS mean surface
-    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name)
-    # ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
+    if data_name == "sif":
+        covar_names = ["evi"]
+    else:
+        covar_names = ["lon", "lat"]
+    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name, covar_names)
+    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
 
     # Rescale the data
     # ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
     # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Divide by custom standard dev. calculated from residuals at all spatial locations
-    # ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
-    ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
-    # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+    ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
+    # ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
+    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
 
     # Remove outliers and return
     return ds_field

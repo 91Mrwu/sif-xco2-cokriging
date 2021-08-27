@@ -103,7 +103,7 @@ def qq_plots(mf):
     sm.qqplot(mf.field_2.values, line="45", ax=axes[1])
     axes[1].set_title(f"SIF: {mf.field_2.timestamp}", fontsize=12)
 
-    fig.suptitle("Q-Q plots: 4x5-degree residuals over North America", fontsize=14)
+    fig.suptitle("Q-Q plots: 4x5-degree residuals over North America", fontsize=12)
 
 
 def raw_climatology(df, title, filename=None):
@@ -116,7 +116,12 @@ def raw_climatology(df, title, filename=None):
         df["time"], df["sif"], color=SIF_COLOR, s=20, alpha=ALPHA, label="SIF"
     )
     ax.scatter(
-        df["time"], df["xco2"], color=XCO2_COLOR, s=20, alpha=ALPHA, label="XCO$_2$",
+        df["time"],
+        df["xco2"],
+        color=XCO2_COLOR,
+        s=20,
+        alpha=ALPHA,
+        label="XCO$_2$",
     )
     ax.scatter([], [], color=SIF_COLOR, s=20, alpha=ALPHA, label="SIF")
 
@@ -238,7 +243,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
     # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
     PROJ = ccrs.PlateCarree()
-    CMAP = cm.roma
+    CMAP = cm.roma.reversed()
     title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
     extents = [-130, -60, 18, 60]
@@ -282,8 +287,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
         transform=ccrs.PlateCarree(),
         ax=ax1,
         cmap=CMAP,
-        # vmin=-2,
-        # center=0,
+        vmin=-3,
+        center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
     xr.plot.imshow(
@@ -291,8 +296,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
         transform=ccrs.PlateCarree(),
         ax=ax2,
         cmap=CMAP,
-        # vmin=-2,
-        # center=0,
+        vmin=-3,
+        center=0,
         cbar_kwargs={"label": "Process residuals"},
     )
 
@@ -341,7 +346,7 @@ def plot_model(df_fit, params, ax):
                 transform=ax[i].transAxes,
                 ha="right",
                 va="bottom",
-                size=14,
+                size=12,
             )
     ax[1].text(
         0.05,
@@ -350,7 +355,7 @@ def plot_model(df_fit, params, ax):
         transform=ax[1].transAxes,
         ha="left",
         va="bottom",
-        size=14,
+        size=12,
     )
 
 
@@ -380,31 +385,32 @@ def plot_variograms(
             label=f"Empirical {type_lab.lower()}",
         )
         if i == 1:
-            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=14)
+            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=12)
         else:
-            ax[i].set_ylabel(scale_lab, fontsize=14)
+            ax[i].set_ylabel(scale_lab, fontsize=12)
             if scale_lab.lower() != "covariance":
                 ax[i].set_ylim(bottom=0)
-        ax[i].set_title(var, fontsize=14)
-        ax[i].set_xlabel("Separation distance (km)", fontsize=14)
+        ax[i].set_title(var, fontsize=12)
+        ax[i].set_xlabel("Separation distance (km)", fontsize=12)
         ax[i].legend()
         ax[i].tick_params(axis="both", which="major", labelsize=12)
 
     if "fit" in res_obj.keys() and params is not None:
         plot_model(res_obj["fit"], params, ax)
 
-    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=14)
+    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=12)
     ax[1].set_title(
         f"Cross-{type_lab.lower()}: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
-        fontsize=14,
+        fontsize=12,
     )
-    ax[2].set_title(f"{type_lab}: SIF", fontsize=14)
+    ax[2].set_title(f"{type_lab}: SIF", fontsize=12)
 
     fig.suptitle(
-        f"{type_lab}s and cross-{type_lab.lower()} for XCO$_2$ and SIF residuals\n {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
-        fontsize=14,
+        f"{type_lab}s and cross-{type_lab.lower()} for XCO$_2$ and SIF residuals\n"
+        f" {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
+        fontsize=12,
+        y=1.1,
     )
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=100)
-

@@ -9,16 +9,16 @@ from scipy.optimize import minimize
 from spatial_tools import distance_matrix
 
 # TODO: establish a variogram class
-SIG_L = 0.8
-SIG_U = 1.4
+SIG_L = 0.4
+SIG_U = 3.5
 NU_L = 0.2
 NU_U = 3.5
 LEN_L = 1e2
 LEN_U = 1e3
 NUG_L = 0.0
-NUG_U = 0.1
+NUG_U = 0.5
 RHO_L = -1.0
-RHO_U = -0.1
+RHO_U = 1.0
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -103,7 +103,8 @@ def empirical_variogram(
     df["bin_center"] = df["bin_center"].astype("string").astype("float")
     if (df["count"] < 30).any():
         warnings.warn(
-            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram calculation."
+            f"WARNING: Fewer than 30 pairs used for at least one bin in variogram"
+            f" calculation."
         )
     if label is not None:
         df["label"] = label
@@ -194,7 +195,7 @@ def fit_variogram_wls(
 ):
     """
     Fit covariance parameters to empirical variogram by weighted least squares (Cressie, 1985).
-    
+
     Parameters:
         xdata: pd.series giving the spatial lags
         ydata: pd.series giving the empirical variogram values to be fitted
@@ -245,7 +246,7 @@ def fit_variogram_wls(
 
 def composite_fit(params: np.array, df_comp: pd.DataFrame) -> np.array:
     """Composite WLS fits marginal and cross-semivariogram parameters simultaneously.
-    
+
     Parameters:
         params: initial guess [sigma_1, nu_1, len_scale_1, tau_1, nu_12, len_scale_12, rho_12, sigma_2, nu_2, len_scale_2, tau_2]
         df_comp: labelled empirical (cross-) semivariograms stacked into a single dataframe
@@ -257,7 +258,11 @@ def composite_fit(params: np.array, df_comp: pd.DataFrame) -> np.array:
     bounds_cross = [(NU_L, NU_U), (LEN_L, LEN_U), (RHO_L, RHO_U)]
     bounds = bounds_marg + bounds_cross + bounds_marg
     optim_result = minimize(
-        composite_wls, params, args=(df_comp), method="L-BFGS-B", bounds=bounds,
+        composite_wls,
+        params,
+        args=(df_comp),
+        method="L-BFGS-B",
+        bounds=bounds,
     )
     if optim_result.success == False:
         warnings.warn("ERROR: optimization did not converge.")
@@ -302,13 +307,8 @@ def check_cauchyshwarz(covariograms, names):
         warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
 
 
-def variogram_analysis(
-    mf, params_guess, n_bins=50,
-):
-    """
-    Compute the empirical spatial-only variograms from a multi-field object and find the weighted least squares fit.
-    NOTE: 
-    - data must have the same scale and the spatial mean is assumed to be zero
+def variogram_analysis(mf, params_guess, n_bins=50):
+    """Compute the empirical spatial-only variograms from a multi-field object and find the weighted least squares fit.
 
     Parameters:
         mf: multi-field object
@@ -317,13 +317,24 @@ def variogram_analysis(
 
     Returns:
         variograms: dictionary containing semivariogram and cross-semivariogram dataframes
-        covariograms: dictionary containing covariogram and cross-covariogram dataframes 
+        covariograms: dictionary containing covariogram and cross-covariogram dataframes
         params_fit: dictionary of parameter fits for each semivariogram and cross-semivariogram
+
+    NOTE:
+    - data must have the same scale and the spatial mean is assumed to be zero
     """
     fields = [mf.field_1, mf.field_2]
     dists = [
-        distance_matrix(mf.field_1.coords, mf.field_1.coords, fast_dist=mf.fast_dist,),
-        distance_matrix(mf.field_2.coords, mf.field_2.coords, fast_dist=mf.fast_dist,),
+        distance_matrix(
+            mf.field_1.coords,
+            mf.field_1.coords,
+            fast_dist=mf.fast_dist,
+        ),
+        distance_matrix(
+            mf.field_2.coords,
+            mf.field_2.coords,
+            fast_dist=mf.fast_dist,
+        ),
     ]
     dist_cross = distance_matrix(
         mf.field_1.coords, mf.field_2.coords, fast_dist=mf.fast_dist
@@ -338,7 +349,10 @@ def variogram_analysis(
             dists[i], field.values, n_bins=n_bins, covariogram=False, label=labels[i]
         )
         covariograms[field.data_name] = empirical_variogram(
-            dists[i], field.values, n_bins=n_bins, covariogram=True,
+            dists[i],
+            field.values,
+            n_bins=n_bins,
+            covariogram=True,
         )
 
     # Compute cross-semivariogram and cross-covariogram
@@ -371,4 +385,3 @@ def variogram_analysis(
     # check_cauchyshwarz(variograms, names)
 
     return variograms, covariograms, params_fit
-

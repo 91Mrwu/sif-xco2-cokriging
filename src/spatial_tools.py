@@ -1,8 +1,6 @@
 # import warnings
 
-# from numba import njit
 import numpy as np
-# import pandas as pd
 import xarray as xr
 
 from scipy.spatial.distance import cdist
@@ -20,22 +18,26 @@ def fit_linear_trend(da):
     return xr.DataArray(trend, dims=["time"], coords={"time": da.time})
 
 
-def fit_ols(ds, data_name):
+def fit_ols(ds, data_name, covar_names: list):
     """Fit and predict the mean surface using ordinary least squares with standarized coordinates."""
-    df = ds[data_name].to_dataframe().drop(columns=["time"]).dropna().reset_index()
-    if df.shape[0] == 0:
-        # no data
+    df = (
+        ds.to_dataframe()
+        .drop(columns=["time", f"{data_name}_var"])
+        .dropna(subset=[data_name])
+        .reset_index()
+    )
+    if df.shape[0] == 0:  # no data
         return ds[data_name] * np.nan
-    else:
-        coords = df[["lon", "lat"]].apply(lambda x: standardize(x), axis=0)
-        model = LinearRegression().fit(coords, df.iloc[:, -1])
-        df = df.iloc[:, :-1]
-        df["ols_mean"] = model.predict(coords)
-        return (
-            df.set_index(["lon", "lat"])
-            .to_xarray()
-            .assign_coords(coords={"time": ds[data_name].time})["ols_mean"]
-        )
+    covariates = df[covar_names].apply(lambda x: standardize(x), axis=0)
+    model = LinearRegression().fit(covariates, df[data_name])
+    df = df[["lon", "lat"]]
+    df["ols_mean"] = model.predict(covariates)
+    ds_pred = (
+        df.set_index(["lon", "lat"])
+        .to_xarray()
+        .assign_coords(coords={"time": ds[data_name].time})
+    )
+    return ds_pred["ols_mean"]
 
 
 def expand_grid(*args):
@@ -50,7 +52,7 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
     Computes the geodesic (or great circle if fast_dist=True) distance among all pairs of points given two sets of coordinates.
     Wrapper for scipy.spatial.distance.cdist using geopy.distance.geodesic as a the metric.
 
-    NOTE: 
+    NOTE:
     - points should be formatted in rows as [lat, lon]
     - if fast_dist=True, units are kilometers regardless of specification
     """
@@ -101,4 +103,3 @@ def pre_post_diag(u, A, v=None):
         v = u
     return np.matmul(np.diag(u), np.matmul(A, np.diag(v)))
     # return np.diag(u) @ A @ np.diag(v)  # matmul doesn't play with numba
-

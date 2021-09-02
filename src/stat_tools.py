@@ -4,6 +4,16 @@ import pandas as pd
 import xarray
 from sklearn.linear_model import LinearRegression
 
+
+## Generic stats
+def standardize(x, unique=False):
+    """Stadardize the elements of the input vector (based on unique elements)."""
+    if unique:
+        return (x - np.unique(x).mean()) / np.unique(x).std()
+    else:
+        return (x - x.mean()) / x.std()
+
+
 ## Counts / replications
 def get_count(da):
     """
@@ -27,6 +37,31 @@ def apply_count(da):
 
 
 ## Trend fitting
+def simple_linear_regression(x):
+    """
+    Fit and predict a trend from a vector with indices as the covariate. Return the trend vector.
+    Inputs:
+        x: 1-d numpy array
+    Outputs:
+        pred: 1-d numpy array
+    """
+    if np.isnan(x).all():
+        return x
+    else:
+        # obtain covariate from array indices
+        data = np.stack([np.arange(x.size), x])
+        data = data[:, ~np.isnan(data).any(axis=0)]
+
+        # fit model and predict at non-missing elements
+        X = data[0, :].reshape(-1, 1)
+        y = data[1, :]
+        model = LinearRegression().fit(X, y)
+
+        pred = np.copy(x)
+        pred[~np.isnan(pred)] = model.predict(X)
+        return pred
+
+
 def detrend(x):
     """
     Fit and remove a trend from a vector with indices as the covariate. Return the detrended vector and the slope of the trend seperately.
@@ -35,6 +70,8 @@ def detrend(x):
     Outputs:
         - slope: float
         - z: 1-d numpy array
+
+    NOTE: if we don't use the coeficient for anything, just make this function a wrapper for SLR above
     """
     if np.isnan(x).all():
         return x, np.nan
@@ -84,7 +121,7 @@ def compute_xcor_1d(v1, v2, lag=0, tau=None):
     # remove the mean along time dim
     x = v1_m - v1_m.mean()
     y = v2_m - v2_m.mean()
-    if lag is not 0:
+    if lag != 0:
         # truncate along time dim at appropriate position to apply lag
         x = x[lag:]
         y = y[:-lag]
@@ -194,8 +231,14 @@ def optim_lag_nd(da1, da2, lag_bnds, tau=None):
 
     # return data set with arrays optimal lag and corresponding xcor for each element
     return xarray.Dataset(
-        {"optim_lag": (["lon", "lat"], optim_lag), "xcor": (["lon", "lat"], xcor),},
-        coords={"lon": da1.lon, "lat": da1.lat,},
+        {
+            "optim_lag": (["lon", "lat"], optim_lag),
+            "xcor": (["lon", "lat"], xcor),
+        },
+        coords={
+            "lon": da1.lon,
+            "lat": da1.lat,
+        },
     )
 
 
@@ -235,4 +278,3 @@ def get_stats_df(df_group, lags=[0], tau=None):
         df[f"xcor_lag{lag}"] = compute_xcor_1d(xco2_resid, sif_resid, lag=lag, tau=tau)
 
     return df
-

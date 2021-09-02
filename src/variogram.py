@@ -14,9 +14,9 @@ SIG_U = 3.5
 NU_L = 0.2
 NU_U = 3.5
 LEN_L = 1e2
-LEN_U = 1e3
+LEN_U = 2e3
 NUG_L = 0.0
-NUG_U = 0.5
+NUG_U = 0.2
 RHO_L = -1.0
 RHO_U = 1.0
 
@@ -80,12 +80,15 @@ def variogram_cloud(dist, values1, values2=None, covariogram=False):
 
 
 def empirical_variogram(
-    dist, values1, values2=None, n_bins=50, covariogram=False, label=None
+    dist, values1, values2=None, n_bins=50, max_dist=None, covariogram=False, label=None
 ):
     """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
     df = variogram_cloud(dist, values1, values2=values2, covariogram=covariogram)
     # NOTE: if computation becomes slow, this could be done before computing the cloud values
-    df = df[df.distance <= 0.5 * dist.max()]
+    if max_dist is None:
+        df = df[df.distance <= 0.25 * dist.max()]
+    else:
+        df = df[df.distance <= max_dist]
 
     bin_centers, bin_edges = construct_variogram_bins(
         df["distance"].min(), df["distance"].max(), n_bins
@@ -307,7 +310,7 @@ def check_cauchyshwarz(covariograms, names):
         warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")
 
 
-def variogram_analysis(mf, params_guess, n_bins=50):
+def variogram_analysis(mf, params_guess, n_bins=50, max_dist=None):
     """Compute the empirical spatial-only variograms from a multi-field object and find the weighted least squares fit.
 
     Parameters:
@@ -322,6 +325,7 @@ def variogram_analysis(mf, params_guess, n_bins=50):
 
     NOTE:
     - data must have the same scale and the spatial mean is assumed to be zero
+    - observation and prediction domains are assumed to be the same (even between datasets)
     """
     fields = [mf.field_1, mf.field_2]
     dists = [
@@ -346,12 +350,18 @@ def variogram_analysis(mf, params_guess, n_bins=50):
     labels = ["y1", "y2"]
     for i, field in enumerate(fields):
         variograms[field.data_name] = empirical_variogram(
-            dists[i], field.values, n_bins=n_bins, covariogram=False, label=labels[i]
+            dists[i],
+            field.values,
+            n_bins=n_bins,
+            max_dist=max_dist,
+            covariogram=False,
+            label=labels[i],
         )
         covariograms[field.data_name] = empirical_variogram(
             dists[i],
             field.values,
             n_bins=n_bins,
+            max_dist=max_dist,
             covariogram=True,
         )
 
@@ -362,6 +372,7 @@ def variogram_analysis(mf, params_guess, n_bins=50):
         fields[0].values,
         values2=fields[1].values,
         n_bins=n_bins,
+        max_dist=max_dist,
         covariogram=False,
         label="cross",
     )
@@ -370,6 +381,7 @@ def variogram_analysis(mf, params_guess, n_bins=50):
         fields[0].values,
         values2=fields[1].values,
         n_bins=n_bins,
+        max_dist=max_dist,
         covariogram=True,
     )
 
@@ -381,7 +393,6 @@ def variogram_analysis(mf, params_guess, n_bins=50):
     else:
         params_fit = None
 
-    # TODO: sort out how to handle different data and prediction domains
     # check_cauchyshwarz(variograms, names)
 
     return variograms, covariograms, params_fit

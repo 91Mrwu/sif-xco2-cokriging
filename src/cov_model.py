@@ -14,7 +14,7 @@ import variogram as vgm
 
 class Matern:
     """The Matern covariance model.
-    
+
     TODO: make this a subclass of gs.CovModel?
     """
 
@@ -102,7 +102,7 @@ class BivariateMatern:
 
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s).
-        
+
         NOTE: if nugget is not added here, then cov model needs to be updated in notation
         """
         return self.kernel_1.sigma ** 2 * self.kernel_1.correlation(dist_mat)
@@ -126,7 +126,7 @@ class BivariateMatern:
 
     def covariance_matrix(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix.
-        
+
         NOTE: ask about when to add nugget and error variance along diag
         """
         C_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
@@ -258,13 +258,13 @@ class BivariateMatern:
 
     #     return self, (vario_obj1, vario_obj2)
 
-    def empirical_variograms(self, params_guess, n_bins=50):
-        """Computes and fits semivariograms and a cross-semivariograms via composite WLS. 
-        
+    def empirical_variograms(self, params_guess, n_bins=50, max_dist=None):
+        """Computes and fits semivariograms and a cross-semivariograms via composite WLS.
+
         NOTE: Kernels could be updated with fitted parameters.
         """
         variograms, covariograms, params = vgm.variogram_analysis(
-            self.fields, params_guess, n_bins=n_bins
+            self.fields, params_guess, n_bins=n_bins, max_dist=max_dist
         )
         self.fields.variograms = variograms
         self.fields.covariograms = covariograms
@@ -315,7 +315,8 @@ class BivariateMatern:
         self.set_params(optim_res.x)
         if optim_res.success is not True:
             raise Exception(
-                f"ERROR: optimization did not converge. Terminated with message: {optim_res.message}"
+                "ERROR: optimization did not converge. Terminated with message:"
+                f" {optim_res.message}"
             )
         # check parameter validity (Gneiting et al. 2010, or just psd check?)
         # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?

@@ -271,7 +271,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         ax1 = fig.add_subplot(gs[0:50, 0:49], projection=PROJ)
         ax2 = fig.add_subplot(gs[0:50, 51:100], projection=PROJ)
         axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
-        fig.suptitle(title, size=14, y=0.95)
+        fig.suptitle(title, size=12, y=0.95)
     else:
         # fig = plt.figure(figsize=(20, 5))
         # gs = fig.add_gridspec(100, 100)

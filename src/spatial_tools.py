@@ -19,7 +19,7 @@ def fit_linear_trend(da):
 
 
 def fit_ols(ds, data_name, covar_names: list):
-    """Fit and predict the mean surface using ordinary least squares with standarized coordinates."""
+    """Fit and predict the mean surface using ordinary least squares with standarized covariates."""
     df = (
         ds.to_dataframe()
         .drop(columns=["time", f"{data_name}_var"])

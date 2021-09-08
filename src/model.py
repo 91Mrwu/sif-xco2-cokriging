@@ -1,9 +1,11 @@
-import warnings
-
-from numba import njit, prange
+"""
+This will be the main module.
+It will define the univariate and bivariate models, along with parameter bounds (getter and setter)
+It will provide an interface to model fitting using a variography class (with args)
+It will provide an interface to model prediction using a cokriging class (with args, mainly prediction locations)
+"""
 import numpy as np
 
-# import gstools as gs
 import scipy.special as sps
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.optimize import minimize
@@ -13,10 +15,7 @@ import variogram as vgm
 
 
 class Matern:
-    """The Matern covariance model.
-
-    TODO: make this a subclass of gs.CovModel?
-    """
+    """The Matern covariance model."""
 
     def __init__(self, sigma=1.0, nu=1.5, len_scale=1.0, nugget=0.0):
         self.sigma = sigma  # process standard deviation
@@ -51,12 +50,14 @@ class Matern:
         return res
 
 
+# TODO: add method to check parameter validity (overall pos def and paper specs)
 class BivariateMatern:
     """Bivariate Matern kernel, or correlation function."""
 
     def __init__(
         self, fields, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=None
     ):
+        # TODO: update so that kernels are not required
         self.rho = rho  # co-located correlation coefficient
         if nu_b is None:
             nu_b = 0.5 * (kernel_1.nu + kernel_2.nu)
@@ -192,72 +193,6 @@ class BivariateMatern:
             # "sigep_22": self.sigep_22,
         }
 
-    # def _params_from_gstools(
-    #     self, field, bin_edges, sampling_size=None, sampling_seed=None
-    # ):
-    #     """
-    #     NOTE: This variogram model is represented over Euclidean distance so lengh scale will be wrong (though haversine distance availalbe via gs.variogram.estimator.unstructured). If we want to make a variogram estimate available, we should write it ourselves (then we also have more control, e.g. warnings when there are less than 30 obs in a bin).
-    #     """
-    #     # estimate variogram
-    #     bin_center, gamma = gs.vario_estimate_unstructured(
-    #         (field.coords[:, 1], field.coords[:, 0]),
-    #         field.values,
-    #         bin_edges,
-    #         sampling_size=sampling_size,
-    #         sampling_seed=sampling_seed,
-    #         estimator="cressie",
-    #     )
-    #     # fit a Matern variogram model
-    #     # NOTE: may want to use custom Matern formulation
-    #     fit_model = gs.Matern(dim=2, nu=2.5)
-    #     fit_model.set_arg_bounds(var=[0.1, 10], nu=[0.2, 5], len_scale=[1, 500])
-    #     params, _ = fit_model.fit_variogram(bin_center, gamma, nu=False, nugget=False)
-    #     return (
-    #         params,
-    #         {"model": fit_model, "bins": bin_center, "emp_semivariogram": gamma},
-    #     )
-
-    # def _gs_kernels(self, bin_edges, sampling_size=None, sampling_seed=None):
-    #     """
-    #     Collects parameters needed for construction of process kernels and cross-kernels.
-
-    #     TODO: add ability to set each parameter; special feature in gstools for individual kernels, and manual for cross kernels.
-    #     """
-    #     params_1, vario_obj1 = self._params_from_variogram(
-    #         self.fields.field_1,
-    #         bin_edges,
-    #         sampling_size=sampling_size,
-    #         sampling_seed=sampling_seed,
-    #     )
-    #     params_2, vario_obj2 = self._params_from_variogram(
-    #         self.fields.field_2,
-    #         bin_edges,
-    #         sampling_size=sampling_size,
-    #         sampling_seed=sampling_seed,
-    #     )
-
-    #     self.kernel_1 = Matern(
-    #         sigma=np.sqrt(params_1["var"]),
-    #         nu=params_1["nu"],
-    #         len_scale=params_1["len_scale"],
-    #         nugget=params_1["nugget"],
-    #     )
-    #     self.kernel_2 = Matern(
-    #         sigma=np.sqrt(params_2["var"]),
-    #         nu=params_2["nu"],
-    #         len_scale=params_2["len_scale"],
-    #         nugget=params_2["nugget"],
-    #     )
-    #     self.kernel_b = Matern(
-    #         nu=0.5 * (self.kernel_1.nu + self.kernel_2.nu),
-    #         len_scale=0.5 * (self.kernel_1.len_scale + self.kernel_2.len_scale),
-    #     )
-    #     self.rho = pearsonr(
-    #         *spatial_tools.match_data_locations(self.fields.field_1, self.fields.field_2)
-    #     )[0]
-
-    #     return self, (vario_obj1, vario_obj2)
-
     def empirical_variograms(self, params_guess, n_bins=50, max_dist=None):
         """Computes and fits semivariograms and a cross-semivariograms via composite WLS.
 
@@ -273,52 +208,52 @@ class BivariateMatern:
         # self.set_params(params_arr)
         return variograms, covariograms, params
 
-    def neg_log_lik(self, params, dist_blocks):
-        """Computes the (negative) log-likelihood of the supplied parameters."""
-        # construct joint covariance matrix
-        self.set_params(params)
-        cov_mat = self.covariance_matrix(dist_blocks)
+    # def neg_log_lik(self, params, dist_blocks):
+    #     """Computes the (negative) log-likelihood of the supplied parameters."""
+    #     # construct joint covariance matrix
+    #     self.set_params(params)
+    #     cov_mat = self.covariance_matrix(dist_blocks)
 
-        # inverse and determinant via Cholesky decomposition
-        try:
-            cho_l, low = cho_factor(cov_mat, lower=True)
-        except:
-            # covariance matrix is not positive definite
-            return np.inf
+    #     # inverse and determinant via Cholesky decomposition
+    #     try:
+    #         cho_l, low = cho_factor(cov_mat, lower=True)
+    #     except:
+    #         # covariance matrix is not positive definite
+    #         return np.inf
 
-        log_det = np.sum(np.log(np.diag(cho_l)))
-        quad_form = np.matmul(
-            self.fields.joint_data_vec,
-            cho_solve((cho_l, low), self.fields.joint_data_vec),
-        )
+    #     log_det = np.sum(np.log(np.diag(cho_l)))
+    #     quad_form = np.matmul(
+    #         self.fields.joint_data_vec,
+    #         cho_solve((cho_l, low), self.fields.joint_data_vec),
+    #     )
 
-        # negative log-likelihood (up to normalizing constants)
-        return log_det + 0.5 * quad_form
+    #     # negative log-likelihood (up to normalizing constants)
+    #     return log_det + 0.5 * quad_form
 
-    def fit(self, initial_guess=None, options=None):
-        """Fit model parameters by maximum likelihood estimation."""
-        # TODO: allow for variable smoothness, maybe use exponential transform for all but rho
-        if initial_guess is None:
-            initial_guess = list(self.get_params().values())
-        bounds = list(self.param_bounds.values())
-        dist_blocks = self.fields.get_joint_dists()
+    # def fit(self, initial_guess=None, options=None):
+    #     """Fit model parameters by maximum likelihood estimation."""
+    #     # TODO: allow for variable smoothness, maybe use exponential transform for all but rho
+    #     if initial_guess is None:
+    #         initial_guess = list(self.get_params().values())
+    #     bounds = list(self.param_bounds.values())
+    #     dist_blocks = self.fields.get_joint_dists()
 
-        # minimize the negative log-likelihood
-        optim_res = minimize(
-            self.neg_log_lik,
-            initial_guess,
-            bounds=bounds,
-            args=(dist_blocks),
-            method="L-BFGS-B",
-            options=options,
-        )
-        self.set_params(optim_res.x)
-        if optim_res.success is not True:
-            raise Exception(
-                "ERROR: optimization did not converge. Terminated with message:"
-                f" {optim_res.message}"
-            )
-        # check parameter validity (Gneiting et al. 2010, or just psd check?)
-        # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
-        # cho_factor(self.covariance_matrix(dist_blocks))
-        return self
+    #     # minimize the negative log-likelihood
+    #     optim_res = minimize(
+    #         self.neg_log_lik,
+    #         initial_guess,
+    #         bounds=bounds,
+    #         args=(dist_blocks),
+    #         method="L-BFGS-B",
+    #         options=options,
+    #     )
+    #     self.set_params(optim_res.x)
+    #     if optim_res.success is not True:
+    #         raise Exception(
+    #             "ERROR: optimization did not converge. Terminated with message:"
+    #             f" {optim_res.message}"
+    #         )
+    #     # check parameter validity (Gneiting et al. 2010, or just psd check?)
+    #     # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
+    #     # cho_factor(self.covariance_matrix(dist_blocks))
+    #     return self

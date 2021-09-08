@@ -9,7 +9,8 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
-import cartopy.mpl.ticker as cticker
+
+# import cartopy.mpl.ticker as cticker
 from cmcrameri import cm
 
 from data_utils import set_main_coords, get_main_coords
@@ -368,6 +369,7 @@ def plot_variograms(
     scale_lab="Semivariance",
     filename=None,
 ):
+    # TODO: add bar chart (or number) indicating bin count
     fig, ax = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
     lags = res_obj["xco2"]["bin_center"].values

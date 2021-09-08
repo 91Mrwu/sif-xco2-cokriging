@@ -1,5 +1,3 @@
-# import warnings
-
 import numpy as np
 import xarray as xr
 
@@ -68,26 +66,6 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
     else:
         # geodesic distances in specified units
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
-
-
-# def match_data_locations(field_1, field_2):
-#     """Only keep data at shared locations"""
-#     df_1 = pd.DataFrame(
-#         {
-#             "lat": field_1.coords[:, 0],
-#             "lon": field_1.coords[:, 1],
-#             "values": field_1.values,
-#         }
-#     )
-#     df_2 = pd.DataFrame(
-#         {
-#             "lat": field_2.coords[:, 0],
-#             "lon": field_2.coords[:, 1],
-#             "values": field_2.values,
-#         }
-#     )
-#     df = pd.merge(df_1, df_2, on=["lat", "lon"], suffixes=("_1", "_2"))
-#     return df.values_1, df.values_2
 
 
 # TODO: test whether numba is actually faster here using toy arrays

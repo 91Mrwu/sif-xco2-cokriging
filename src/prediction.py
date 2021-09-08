@@ -1,3 +1,12 @@
+"""
+Need three classes: variogram, covariance_model, prediction (this one)
+
+- covariance_model is the main class
+- variogram fits and sets the parameters of covariance_model
+- prediction takes the covariance model and produces cokriging predictions (simple cokriging for residual process only)
+- predictions are provided back to a separate method which maps them back to the data space
+"""
+
 import warnings
 
 import numpy as np
@@ -5,7 +14,7 @@ from scipy.linalg import cho_factor, cho_solve, LinAlgError
 from scipy.interpolate import griddata
 
 import spatial_tools
-import cov_model
+import model
 
 
 class Cokrige:
@@ -101,7 +110,7 @@ class Cokrige:
 
     def _get_pred_mean(self, pred_loc, method="temporal", ds=None):
         """Fits the surface mean at prediction locations using the supplied mean function.
-        
+
         TODO: make mean function more flexible.
         """
         if method == "temporal":
@@ -133,4 +142,3 @@ class Cokrige:
         else:
             warnings.warn(f"Error: method '{method}' not implemented.")
         return griddata(coords, field_std, pred_loc, method="nearest")
-

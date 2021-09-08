@@ -4,80 +4,7 @@ from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
 
-# import xarray as xr
-
 import spatial_tools
-
-
-def get_field_names(ds):
-    """Returns data and estimated variance names from dataset."""
-    var_name = [name for name in list(ds.keys()) if "_var" in name][0]
-    data_name = var_name.replace("_var", "")
-    return data_name, var_name
-
-
-# def get_scale_factor(ds, data_name):
-#     """Computes the initial univariate semivariograms, and returns the square root of each semivariogram value based on the most pairs around a lag of 1000 km."""
-#     # Compute the semivariogram
-#     df = ds[data_name].to_dataframe().reset_index().dropna(subset=[data_name])
-#     values = df[data_name].values
-#     coords = df[["lat", "lon"]].values
-
-#     if values.size == 0:
-#         return np.nan
-
-#     dist = spatial_tools.distance_matrix(
-#         coords, shift_longitude(coords), fast_dist=True
-#     )
-#     df_vgm = empirical_variogram(dist, values, n_bins=50, covariogram=False)
-
-#     # Get the root of the value which uses the most pairs around lag 1000 km
-#     return np.sqrt(
-#         df_vgm[df_vgm["bin_center"].between(900, 1100)]
-#         .sort_values("count", ascending=False)["bin_mean"]
-#         .values[0]
-#     )
-
-
-def median_abs_dev(x):
-    # NOTE: see https://en.wikipedia.org/wiki/Median_absolute_deviation for details
-    k = 1.4826  # scale factor assuming a normal distribution
-    return k * np.nanmedian(np.abs(x - np.nanmedian(x)))
-
-
-def preprocess_ds(ds, timestamp):
-    """Apply data transformations and compute surface mean and standard deviation."""
-    data_name, _ = get_field_names(ds)
-    ds_copy = ds.copy()
-
-    # Remove linear trend over time
-    ds_copy["temporal_trend"] = spatial_tools.fit_linear_trend(ds_copy[data_name])
-    ds_copy[data_name] = ds_copy[data_name] - ds_copy["temporal_trend"]
-
-    # Select data at timestamp only
-    ds_field = ds_copy.sel(time=timestamp)
-    ds_field.attrs["temporal_fit"] = ds_field["temporal_trend"].values
-
-    # Remove the OLS mean surface
-    if data_name == "sif":
-        covar_names = ["evi"]
-    else:
-        covar_names = ["lon", "lat"]
-    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name, covar_names)
-    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
-
-    # Rescale the data
-    # ds_field.attrs["scale_fact"] = get_scale_factor(ds_field, data_name)
-    # ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
-
-    # Divide by custom standard dev. calculated from residuals at all spatial locations
-    ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
-    # ds_field.attrs["scale_fact"] = median_abs_dev(ds_field[data_name].values)
-    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
-
-    # Remove outliers and return
-    return ds_field
-    # .where(np.abs(ds_field[data_name]) <= 3)
 
 
 class Field:
@@ -87,14 +14,13 @@ class Field:
 
     def __init__(self, ds, timestamp, covariates=None):
         self.timestamp = timestamp
-        self.data_name, self.var_name = get_field_names(ds)
-        ds_prep = preprocess_ds(ds, timestamp)
-        df = ds_prep.to_dataframe().reset_index().dropna(subset=[self.data_name])
-        self.ds = ds_prep
+        self.data_name, self.var_name = _get_field_names(ds)
+        self.ds = preprocess_ds(ds, timestamp)
+        df = self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
         self.spatial_mean = df["spatial_mean"].values
-        self.scale_fact = ds_prep.attrs["scale_fact"]
+        self.scale_fact = self.ds.attrs["scale_fact"]
         self.variance_estimate = df[self.var_name].values
         if covariates is not None:
             self.covariates = df[covariates]
@@ -114,33 +40,10 @@ class Field:
             .assign_coords({"time": np.array(self.timestamp, dtype=np.datetime64)})
         )
 
-    # def get_spatial_df(self):
-    #     """Converts the spatial dataset associated with the timestamp to a data frame with location ids."""
-    #     # NOTE: assumes data is already mean-zero
-    #     df = (
-    #         self.ds[self.data_name]
-    #         .to_dataframe()
-    #         .drop(columns="time")
-    #         .dropna()
-    #         .reset_index()
-    #     )
-    #     # Assign location and time IDs
-    #     df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
-    #     return df
-
-    # def get_spacetime_df(self):
-    #     """Converts the spatio-temporal dataset associated with the timestamp to a data frame."""
-    #     # NOTE: assumes data is already mean-zero
-    #     df = self.ds[self.data_name].to_dataframe().dropna().reset_index()
-    #     # Assign location and time IDs
-    #     df["loc_id"] = df.groupby(["lat", "lon"]).ngroup()
-    #     df["t_id"] = df.groupby(["time"]).ngroup()
-    #     return df
-
 
 class MultiField:
     """
-    Main class.
+    Stores a bivariate process, each of class Field, along with modelling attributes.
     """
 
     def __init__(
@@ -196,3 +99,47 @@ class MultiField:
                 fast_dist=self.fast_dist,
             ),
         }
+
+
+def _get_field_names(ds):
+    """Returns data and estimated variance names from dataset."""
+    var_name = [name for name in list(ds.keys()) if "_var" in name][0]
+    data_name = var_name.replace("_var", "")
+    return data_name, var_name
+
+
+def _median_abs_dev(x):
+    """Returns the median absolute deviation of the input array.
+
+    Assumes the array is Normally distributed. See https://en.wikipedia.org/wiki/Median_absolute_deviation for details."""
+    k = 1.4826  # scale factor assuming a normal distribution
+    return k * np.nanmedian(np.abs(x - np.nanmedian(x)))
+
+
+def preprocess_ds(ds, timestamp):
+    """Apply data transformations and compute surface mean and standard deviation."""
+    data_name, _ = _get_field_names(ds)
+    ds_copy = ds.copy()
+
+    # Remove linear trend over time
+    ds_copy["temporal_trend"] = spatial_tools.fit_linear_trend(ds_copy[data_name])
+    ds_copy[data_name] = ds_copy[data_name] - ds_copy["temporal_trend"]
+
+    # Select data at timestamp only
+    ds_field = ds_copy.sel(time=timestamp)
+    ds_field.attrs["temporal_fit"] = ds_field["temporal_trend"].values
+
+    # Remove the OLS mean surface
+    if data_name == "sif":
+        covar_names = ["evi"]
+    else:
+        covar_names = ["lon", "lat"]
+    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name, covar_names)
+    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
+
+    # Divide by scale factor calculated from residuals at all spatial locations
+    ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
+    # ds_field.attrs["scale_fact"] = _median_abs_dev(ds_field[data_name].values)
+    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+
+    return ds_field

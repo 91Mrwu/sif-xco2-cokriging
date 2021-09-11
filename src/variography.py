@@ -1,12 +1,11 @@
 import warnings
 
-# from numba import njit, prange
 import numpy as np
 import pandas as pd
 import scipy.special as sps
 from scipy.optimize import minimize
 
-from model import UnivariateMatern
+# from model import UnivariateMatern, BivariateMatern
 from spatial_tools import distance_matrix
 
 # TODO: establish a variogram class (dataclass)
@@ -22,25 +21,25 @@ RHO_L = -1.0
 RHO_U = 1.0
 
 # NOTE: set type = semivariogram or covariogram
-class MaternVariogram(UnivariateMatern):
-    pass
+# class MaternVariogram(UnivariateMatern):
+#     pass
 
 
-class MaternCrossVariogram:
-    pass
+# class MaternCrossVariogram:
+#     pass
 
 
-class EmpiricalVariogram:
-    pass
+# class EmpiricalVariogram:
+#     pass
 
 
-class EmpiricalCrossVariogram:
-    pass
+# class EmpiricalCrossVariogram:
+#     pass
 
 
-def fit(theoretical, empirical):
-    # returns a fitted BivariateMatern object
-    pass
+# def fit(theoretical, empirical):
+#     # returns a fitted BivariateMatern object
+#     pass
 
 
 def construct_variogram_bins(min_dist, max_dist, n_bins):
@@ -54,7 +53,6 @@ def construct_variogram_bins(min_dist, max_dist, n_bins):
     return bin_centers, bin_edges
 
 
-# @njit
 def cloud_calc(values1, values2, covariogram):
     """Calculate the semivariogram or covariogram for all point pairs."""
     resid1 = values1 - values1.mean()
@@ -85,7 +83,7 @@ def empirical_variogram(
 ):
     """Compute the empirical semivariogram or covariogram and return as a dataframe with bin averages and counts. If values2 is not None, this will be a cross-variogram."""
     df = variogram_cloud(dist, values1, values2=values2, covariogram=covariogram)
-    # NOTE: if computation becomes slow, this could be done before computing the cloud values
+    # NOTE: if computation becomes slow, max_dist filter could be applied before computing the cloud values
     if max_dist is None:
         df = df[df.distance <= 0.25 * dist.max()]
     else:
@@ -115,7 +113,6 @@ def empirical_variogram(
     return df
 
 
-# TODO: add ability to `freeze` parameters
 def matern_correlation(xdata, nu, len_scale):
     xdata_ = xdata[xdata > 0.0] / len_scale
     corr = np.ones_like(xdata)
@@ -151,6 +148,7 @@ def matern_cross_cov(xdata, sigmas, nu, len_scale, rho):
 
 
 def weighted_least_squares(ydata, yfit, bin_counts):
+    """Computes the weighted least squares cost specified by Cressie (1985)."""
     zeros = np.argwhere(yfit == 0.0)
     non_zero = np.argwhere(yfit != 0.0)
     wls = np.zeros_like(yfit)
@@ -162,14 +160,6 @@ def weighted_least_squares(ydata, yfit, bin_counts):
         * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
     )
     return np.sum(wls)
-
-
-# def wls_cost(params, xdata, ydata, bin_counts, sigmas, nuggets):
-#     if sigmas is not None:
-#         yfit = matern_cross_vario(xdata, sigmas, nuggets, *params)
-#     else:
-#         yfit = matern_vario(xdata, *params)
-#     return weighted_least_squares(ydata, yfit, bin_counts)
 
 
 def composite_wls(params: np.array, df_comp: pd.DataFrame) -> np.float:
@@ -192,60 +182,6 @@ def composite_wls(params: np.array, df_comp: pd.DataFrame) -> np.float:
     return weighted_least_squares(
         df_comp["bin_mean"].values, df_comp["fit"].values, df_comp["count"].values
     )
-
-
-# def fit_variogram_wls(
-#     xdata, ydata, bin_counts, initial_guess, sigmas=None, nuggets=None
-# ):
-#     """
-#     Fit covariance parameters to empirical variogram by weighted least squares (Cressie, 1985).
-
-#     Parameters:
-#         xdata: pd.series giving the spatial lags
-#         ydata: pd.series giving the empirical variogram values to be fitted
-#         bin_counts: pd.series indicating the number of spatio-temporal point pairs used to calculate each empirical value
-#         initial_guess: list of parameter starting values given as one of [sigma, nu, len_scale, nugget] or [nu, len_scale, rho]
-#         sigmas: list of standard deviations if fitting a cross (co)variogram
-#     Returns:
-#         params: list of parameter values
-#         fit: dataframe containing the theoretical covariance
-#     """
-#     pred = np.linspace(0, 1.1 * xdata.max(), 100)
-#     if sigmas is not None:
-#         # Cross covariance, fit cross-variogram
-#         assert len(initial_guess) == 3
-#         bounds = [(NU_L, NU_U), (LEN_L, LEN_U), (RHO_L, RHO_U)]
-#         optim_result = minimize(
-#             wls_cost,
-#             initial_guess,
-#             args=(xdata.values, ydata.values, bin_counts.values, sigmas, nuggets),
-#             method="L-BFGS-B",
-#             bounds=bounds,
-#         )
-#         var_fit = matern_cross_vario(pred, sigmas, nuggets, *optim_result.x)
-#         cov_fit = matern_cross_cov(pred, sigmas, *optim_result.x)
-#     else:
-#         # Univariate covariance, fit variogram
-#         assert len(initial_guess) == 4
-#         bounds = [(SIG_L, SIG_U), (NU_L, NU_U), (LEN_L, LEN_U), (NUG_L, NUG_U)]
-#         optim_result = minimize(
-#             wls_cost,
-#             initial_guess,
-#             args=(xdata.values, ydata.values, bin_counts.values, None, None),
-#             method="L-BFGS-B",
-#             bounds=bounds,
-#         )
-#         var_fit = matern_vario(pred, *optim_result.x)
-#         cov_fit = matern_cov(pred, *optim_result.x)
-
-#     if optim_result.success == False:
-#         warnings.warn("ERROR: optimization did not converge.")
-
-#     return (
-#         optim_result.x,
-#         pd.DataFrame({"lag": pred, "wls_fit": var_fit}),
-#         pd.DataFrame({"lag": pred, "wls_fit": cov_fit}),
-#     )
 
 
 def composite_fit(params: np.array, df_comp: pd.DataFrame) -> np.array:
@@ -396,6 +332,7 @@ def variogram_analysis(mf, params_guess, n_bins=50, max_dist=None):
     else:
         params_fit = None
 
+    # TODO: check paramter validity
     # check_cauchyshwarz(variograms, names)
 
     return variograms, covariograms, params_fit

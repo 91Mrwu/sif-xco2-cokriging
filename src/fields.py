@@ -19,7 +19,9 @@ class Field:
         df = self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
-        self.spatial_mean = df["spatial_mean"].values
+        self.temporal_trend = self.ds.attrs["temporal_trend"]
+        self.spatial_trend = df["spatial_trend"].values
+        self.spatial_mean = self.ds.attrs["spatial_mean"]
         self.scale_fact = self.ds.attrs["scale_fact"]
         self.variance_estimate = df[self.var_name].values
         if covariates is not None:
@@ -125,21 +127,24 @@ def preprocess_ds(ds, timestamp):
     ds_copy["temporal_trend"] = spatial_tools.fit_linear_trend(ds_copy[data_name])
     ds_copy[data_name] = ds_copy[data_name] - ds_copy["temporal_trend"]
 
-    # Select data at timestamp only
+    # Select data at timestamp (fields are spatial only)
     ds_field = ds_copy.sel(time=timestamp)
-    ds_field.attrs["temporal_fit"] = ds_field["temporal_trend"].values
+    ds_field.attrs["temporal_trend"] = ds_field["temporal_trend"].values
 
-    # Remove the OLS mean surface
+    # Remove the spatial trend by OLS
     if data_name == "sif":
         covar_names = ["evi"]
     else:
         covar_names = ["lon", "lat"]
-    ds_field["spatial_mean"] = spatial_tools.fit_ols(ds_field, data_name, covar_names)
-    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_mean"]
+    ds_field["spatial_trend"] = spatial_tools.fit_ols(ds_field, data_name, covar_names)
+    ds_field[data_name] = ds_field[data_name] - ds_field["spatial_trend"]
 
-    # Divide by scale factor calculated from residuals at all spatial locations
+    # Standardize the residuals
+    ds_field.attrs["spatial_mean"] = np.nanmean(ds_field[data_name].values)
     ds_field.attrs["scale_fact"] = np.nanstd(ds_field[data_name].values)
     # ds_field.attrs["scale_fact"] = _median_abs_dev(ds_field[data_name].values)
-    ds_field[data_name] = ds_field[data_name] / ds_field.attrs["scale_fact"]
+    ds_field[data_name] = (
+        ds_field[data_name] - ds_field.attrs["spatial_mean"]
+    ) / ds_field.attrs["scale_fact"]
 
     return ds_field

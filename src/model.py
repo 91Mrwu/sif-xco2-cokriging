@@ -5,101 +5,180 @@ It will provide an interface to model fitting using a variography class (with ar
 It will provide an interface to model prediction using a cokriging class (with args, mainly prediction locations)
 """
 import numpy as np
+import pandas as pd
 
 import scipy.special as sps
-from scipy.linalg import cho_factor, cho_solve, LinAlgError
-from scipy.optimize import minimize
+
+# from scipy.linalg import cho_factor, cho_solve, LinAlgError
+# from scipy.optimize import minimize
 
 import spatial_tools
-import variogram as vgm
+import variography as vg
 
 
-class Matern:
-    """The Matern covariance model."""
+class MarginalParam:
+    """Multivariate marginal Matern covariance parameter."""
 
-    def __init__(self, sigma=1.0, nu=1.5, len_scale=1.0, nugget=0.0):
-        self.sigma = sigma  # process standard deviation
-        self.nu = nu  # smoothess parameter
-        self.len_scale = len_scale  # length scale parameter
-        self.nugget = nugget  # nugget parameter (NOTE: already squared)
+    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
+        self.name = name
+        self.dim = dim
+        self.type = type
+        self.default = default
+        self.bounds = bounds
+        self.values = np.nan * np.zeros((dim, dim))
+        np.fill_diagonal(self.values, default)
 
-    def correlation(self, h):
-        r"""Matérn correlation function.
+    def get_names(self):
+        return [f"{self.name}_{i+1}{i+1}" for i in range(self.dim)]
 
-        .. math::
-           \rho(r) =
-           \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
-           \left(\sqrt{2\nu}\cdot\frac{r}{\ell}\right)^{\nu} \cdot
-           \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{r}{\ell}\right)
-        """
-        # NOTE: modified version of gptools.CovModel.Matern.correlation
-        # TODO: add check so that negative distances and correlation values yeild warning.
-        h = np.array(np.abs(h), dtype=np.double)
-        # calculate by log-transformation to prevent numerical errors
-        h_gz = h[h > 0.0]
-        res = np.ones_like(h)
-        res[h > 0.0] = np.exp(
-            (1.0 - self.nu) * np.log(2)
-            - sps.gammaln(self.nu)
-            + self.nu * np.log(np.sqrt(2.0 * self.nu) * h_gz / self.len_scale)
-        ) * sps.kv(self.nu, np.sqrt(2.0 * self.nu) * h_gz / self.len_scale)
-        # if nu >> 1 we get errors for the farfield, there 0 is approached
-        res[np.logical_not(np.isfinite(res))] = 0.0
-        # covariance is positive
-        res = np.maximum(res, 0.0)
-        return res
+    def get_values(self):
+        return self.values.diagonal()
+
+    def set_values(self, x: np.ndarray):
+        np.fill_diagonal(self.values, x)
+        return self
+
+    def to_dataframe(self):
+        df = (
+            pd.DataFrame.from_dict(
+                dict(zip(self.get_names(), self.get_values())),
+                orient="index",
+                columns=["value"],
+            )
+            .reset_index()
+            .rename(columns={"index": "name"})
+        )
+        df["bounds"] = [self.bounds] * len(df)
+        return df
+
+
+class CrossParam(MarginalParam):
+    """Multivariate Matern covariance parameter with cross dependence."""
+
+    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
+        super().__init__(name, default, bounds, dim=dim)
+        self._triu_index = np.triu_indices(dim)
+        self.values[self._triu_index] = default
+
+    def get_names(self):
+        return [
+            f"{self.name}_{i+1}{j+1}"
+            for i in range(self.dim)
+            for j in range(self.dim)
+            if i <= j
+        ]
+
+    def get_values(self):
+        return self.values[self._triu_index]
+
+    def set_values(self, x: np.ndarray):
+        self.values[self._triu_index] = x
+        return self
+
+
+class RhoParam(MarginalParam):
+    """Multivariate Matern covariance parameter with cross dependence only."""
+
+    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
+        super().__init__(name, default, bounds, dim=dim)
+        self._triu_index = np.triu_indices(dim, k=1)
+        self.values[self._triu_index] = default
+
+    def get_names(self):
+        return [
+            f"{self.name}_{i+1}{j+1}"
+            for i in range(self.dim)
+            for j in range(self.dim)
+            if i < j
+        ]
+
+    def get_values(self):
+        return self.values[self._triu_index]
+
+    def set_values(self, x: np.ndarray):
+        self.values[self._triu_index] = x
+        return self
+
+
+class MaternParams:
+    """Multivariate Matern covariance parameters.
+
+    Formulation:
+        sigma: process specific standard deviation
+        nu: process specific smoothess
+        len_scale: process specific length scale
+        nugget: process specific squared nugget (i.e., tau^2)
+        rho: co-located cross-correlation coefficient
+    """
+
+    def __init__(self, n_procs: int = 2) -> None:
+        self.n_procs = n_procs
+
+        # Collect all the params here
+
+
+class MaternCovariance:
+    """Matern covariance model (Rassmussen and Williams, 2006)."""
+
+    def __init__(self, params: list[float] = None):
+        pass
+
+    def correlation(self, h: np.ndarray):
+        return matern_correlation(h, *self.params[[1, 2]])
+
+    def covariance(self, h: np.ndarray):
+        """Matern covariance function."""
+        cov = self.params[0] ** 2 * self.correlation(h)
+        cov[h == 0] += self.params[3]
+        return cov
+
+
+class CrossCovariance:
+    """Matern cross-covariance structure."""
+
+    def __init__(self, K1, K2):
+        self.param_names = ["nu", "len_scale", "rho"]
+        self.param_bounds = [(0.2, 3.5), (1e2, 2e3), (-1.0, 1.0)]
+        nu = np.mean([K1.params[1], K2.params[1]])
+        len_scale = np.mean([K1.params[2], K2.params[2]])
+
+    def covariance(self, h: np.ndarray):
+        pass
 
 
 # TODO: add method to check parameter validity (overall pos def and paper specs)
-class BivariateMatern:
-    """Bivariate Matern kernel, or correlation function."""
+class FullBivariateMatern:
+    """Full bivariate Matern covariance model (Gneiting et al., 2010).
 
-    def __init__(
-        self, fields, kernel_1, kernel_2, rho=0.0, nu_b=None, len_scale_b=None
-    ):
-        # TODO: update so that kernels are not required
-        self.rho = rho  # co-located correlation coefficient
-        if nu_b is None:
-            nu_b = 0.5 * (kernel_1.nu + kernel_2.nu)
-        if len_scale_b is None:
-            len_scale_b = 0.5 * (kernel_1.len_scale + kernel_2.len_scale)
-        self.kernel_1 = kernel_1
-        self.kernel_2 = kernel_2
-        self.kernel_b = Matern(nu=nu_b, len_scale=len_scale_b)
+    Parameterization (see MaternCovariance)
+    """
 
-        self.fields = fields
-        # NOTE: do we want to take the mean here, or add values along diagonal individually?
-        self.sigep_11 = fields.field_1.variance_estimate.mean()
-        self.sigep_22 = fields.field_2.variance_estimate.mean()
+    def __init__(self, marginal_kernals: list[MaternCovariance] = None):
+        p = len(marginal_kernals)
+        if marginal_kernals is not None:
+            self.marginal_kernals = marginal_kernals
+        else:
+            self.marginal_kernals = [MaternCovariance(), MaternCovariance()]
 
-        # reasonable
-        # self.param_bounds = {
-        #     "sigma_11": (0.1, 0.4),
-        #     # "nu_11": [0.2, 5.0],
-        #     "len_scale_11": (5e2, 2e3),
-        #     "nugget_11": (0.0, 1.0),
-        #     # "nu_12": [0.2, 5.0],
-        #     "len_scale_12": (1e3, 5e3),
-        #     "rho": (-1.0, -0.01),
-        #     "sigma_22": (0.7, 1.2),
-        #     # "nu_22": [0.2, 5.0],
-        #     "len_scale_22": (5e2, 2e3),
-        #     "nugget_22": (0.0, 1.0),
-        # }
-        # restricted
-        self.param_bounds = {
-            "sigma_11": (0.2, 4.0),
-            "nu_11": [0.2, 0.5],
-            "len_scale_11": (2e3, 5e4),
-            "nugget_11": (0.0, 1.0),
-            "nu_12": [0.2, 0.5],
-            "len_scale_12": (2e3, 5e4),
-            "rho": (-1.0, -0.01),
-            "sigma_22": (0.2, 4.0),
-            "nu_22": [0.2, 0.5],
-            "len_scale_22": (2e3, 5e4),
-            "nugget_22": (0.0, 1.0),
-        }
+        # start data frame of parameters (this will be the main api access to parameters)
+
+        # initalize cross-covariance and append params to table
+        # NOTE: use mean down columns
+        # self.cross_kernel = _avg_cross_params(self.marginal_kernals)
+
+        # get list of relabeled param names
+        # get updated list of param bounds
+        # get 1d array of params for optimization
+
+        # set up a parameter updater
+
+    def cross_covariance(self, h: np.ndarray):
+        return (
+            self.params.rho
+            * self.params.sigmas[0]
+            * self.params.sigmas[1]
+            * self.correlation(h)
+        )
 
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s).
@@ -198,7 +277,7 @@ class BivariateMatern:
 
         NOTE: Kernels could be updated with fitted parameters.
         """
-        variograms, covariograms, params = vgm.variogram_analysis(
+        variograms, covariograms, params = vg.variogram_analysis(
             self.fields, params_guess, n_bins=n_bins, max_dist=max_dist
         )
         self.fields.variograms = variograms
@@ -257,3 +336,33 @@ class BivariateMatern:
     #     # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
     #     # cho_factor(self.covariance_matrix(dist_blocks))
     #     return self
+
+
+def matern_correlation(h: np.ndarray, nu: float, len_scale: float):
+    r"""Matern correlation function.
+
+    Parameters:
+        h: array of spatial separation distances (lags)
+        nu, len_scale: see MaternCovariance
+
+    .. math::
+        \rho(h) =
+        \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
+        \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
+        \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
+    """
+    # TODO: add check so that negative distances and correlation values yeild warning.
+    h = np.array(np.abs(h), dtype=np.double)
+    # calculate by log-transformation to prevent numerical errors
+    h_positive_scaled = h[h > 0.0] / len_scale
+    corr = np.ones_like(h)
+    corr[h > 0.0] = np.exp(
+        (1.0 - nu) * np.log(2)
+        - sps.gammaln(nu)
+        + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
+    ) * sps.kv(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
+    # if nu >> 1 we get errors for the farfield, there 0 is approached
+    corr[np.logical_not(np.isfinite(corr))] = 0.0
+    # Matern correlation is positive
+    corr = np.maximum(corr, 0.0)
+    return corr

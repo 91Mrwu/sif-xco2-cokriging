@@ -22,7 +22,6 @@ class MarginalParam:
     def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
         self.name = name
         self.dim = dim
-        self.type = type
         self.default = default
         self.bounds = bounds
         self.values = np.nan * np.zeros((dim, dim))
@@ -37,6 +36,9 @@ class MarginalParam:
     def set_values(self, x: np.ndarray):
         np.fill_diagonal(self.values, x)
         return self
+
+    def count_params(self):
+        return len(self.get_values())
 
     def to_dataframe(self):
         df = (
@@ -108,69 +110,71 @@ class MaternParams:
         nu: process specific smoothess
         len_scale: process specific length scale
         nugget: process specific squared nugget (i.e., tau^2)
-        rho: co-located cross-correlation coefficient
+        rho: co-located cross-correlation coefficient(s)
     """
 
     def __init__(self, n_procs: int = 2) -> None:
         self.n_procs = n_procs
+        self.sigma = MarginalParam("sigma", 1.0, (0.4, 3.5), dim=n_procs)
+        self.nu = CrossParam("nu", 1.5, (0.2, 3.5), dim=n_procs)
+        self.len_scale = CrossParam("len_scale", 5e2, (1e2, 2e3), dim=n_procs)
+        self.nugget = MarginalParam("nugget", 0.0, (0.0, 0.2), dim=n_procs)
+        self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), dim=n_procs)
+        self._params = [self.sigma, self.nu, self.len_scale, self.nugget, self.rho]
+        self.n_params = 0
+        for p in self._params:
+            self.n_params += p.count_params()
 
-        # Collect all the params here
+    def to_dataframe(self):
+        df_list = [p.to_dataframe() for p in self._params]
+        return pd.concat(df_list, ignore_index=True)
+
+    def get_values(self):
+        return self.to_dataframe()["value"].values
+
+    def set_values(self, x: np.ndarray):
+        if len(x) != self.n_params:
+            raise ValueError("Incorrect number of parameters in input array.")
+        for p in self._params:
+            n_params = p.count_params()
+            vals, x = x[:n_params], x[n_params:]
+            p.set_values(vals)
+        return self
+
+    def get_bounds(self):
+        return self.to_dataframe()["bounds"].values
+
+    def set_bounds(self, **kwargs):
+        for name, bounds in kwargs.items():
+            try:
+                param = getattr(self, name)
+                param.bounds = bounds
+            except AttributeError:
+                raise AttributeError(f"`{name}` is not a valid parameter.")
+        return self
 
 
-class MaternCovariance:
-    """Matern covariance model (Rassmussen and Williams, 2006)."""
+# TODO: add method to check parameter validity (overall pos def and paper specs)
+# NOTE: should this be a subclass of MaternParams?
+class FullBivariateMatern:
+    """Full bivariate Matern covariance model (Gneiting et al., 2010).
 
-    def __init__(self, params: list[float] = None):
-        pass
+    Notes:
+    - Parameterization follows Rassmussen and Williams (2006; see MaternParams)
+    """
+
+    def __init__(self):
+        self.params = MaternParams(n_procs=2)
 
     def correlation(self, h: np.ndarray):
         return matern_correlation(h, *self.params[[1, 2]])
 
-    def covariance(self, h: np.ndarray):
+    def covariance(self, i: int, j: int, h: np.ndarray):
         """Matern covariance function."""
+        # can use, e.g. self.params.sigma.values[i, j]
         cov = self.params[0] ** 2 * self.correlation(h)
         cov[h == 0] += self.params[3]
         return cov
-
-
-class CrossCovariance:
-    """Matern cross-covariance structure."""
-
-    def __init__(self, K1, K2):
-        self.param_names = ["nu", "len_scale", "rho"]
-        self.param_bounds = [(0.2, 3.5), (1e2, 2e3), (-1.0, 1.0)]
-        nu = np.mean([K1.params[1], K2.params[1]])
-        len_scale = np.mean([K1.params[2], K2.params[2]])
-
-    def covariance(self, h: np.ndarray):
-        pass
-
-
-# TODO: add method to check parameter validity (overall pos def and paper specs)
-class FullBivariateMatern:
-    """Full bivariate Matern covariance model (Gneiting et al., 2010).
-
-    Parameterization (see MaternCovariance)
-    """
-
-    def __init__(self, marginal_kernals: list[MaternCovariance] = None):
-        p = len(marginal_kernals)
-        if marginal_kernals is not None:
-            self.marginal_kernals = marginal_kernals
-        else:
-            self.marginal_kernals = [MaternCovariance(), MaternCovariance()]
-
-        # start data frame of parameters (this will be the main api access to parameters)
-
-        # initalize cross-covariance and append params to table
-        # NOTE: use mean down columns
-        # self.cross_kernel = _avg_cross_params(self.marginal_kernals)
-
-        # get list of relabeled param names
-        # get updated list of param bounds
-        # get 1d array of params for optimization
-
-        # set up a parameter updater
 
     def cross_covariance(self, h: np.ndarray):
         return (
@@ -179,6 +183,14 @@ class FullBivariateMatern:
             * self.params.sigmas[1]
             * self.correlation(h)
         )
+
+    def semivariance(self):
+        pass
+
+    def cross_semivariance(self):
+        pass
+
+    # prediction stuff
 
     def pred_covariance(self, dist_mat):
         """Computes the variance-covariance matrix for prediction location(s).
@@ -235,42 +247,6 @@ class FullBivariateMatern:
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
         return spatial_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
-
-    def set_params(self, params_arr):
-        """Set model parameters."""
-        self.kernel_1.sigma = params_arr[0]
-        self.kernel_1.nu = params_arr[1]
-        self.kernel_1.len_scale = params_arr[2]
-        self.kernel_1.nugget = params_arr[3]
-        self.kernel_b.nu = params_arr[4]
-        self.kernel_b.len_scale = params_arr[5]
-        self.rho = params_arr[6]
-        self.kernel_2.sigma = params_arr[7]
-        self.kernel_2.nu = params_arr[8]
-        self.kernel_2.len_scale = params_arr[9]
-        self.kernel_2.nugget = params_arr[10]
-
-    def set_param_bounds(self, bounds):
-        """Set default parameter bounds using dictionary of lists."""
-        self.param_bounds.update(bounds)
-
-    def get_params(self):
-        """Return model parameters as a dict."""
-        return {
-            "sigma_11": self.kernel_1.sigma,
-            "nu_11": self.kernel_1.nu,
-            "len_scale_11": self.kernel_1.len_scale,
-            "nugget_11": self.kernel_1.nugget,
-            # "sigep_11": self.sigep_11,
-            "nu_12": self.kernel_b.nu,
-            "len_scale_12": self.kernel_b.len_scale,
-            "rho": self.rho,
-            "sigma_22": self.kernel_2.sigma,
-            "nu_22": self.kernel_2.nu,
-            "len_scale_22": self.kernel_2.len_scale,
-            "nugget_22": self.kernel_2.nugget,
-            # "sigep_22": self.sigep_22,
-        }
 
     def empirical_variograms(self, params_guess, n_bins=50, max_dist=None):
         """Computes and fits semivariograms and a cross-semivariograms via composite WLS.

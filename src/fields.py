@@ -1,5 +1,6 @@
 import warnings
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
 import numpy as np
@@ -7,6 +8,26 @@ import pandas as pd
 from xarray import Dataset
 
 import spatial_tools
+
+
+@dataclass(frozen=True)
+class VarioConfig:
+    """Structure to store configuration parameters for an empirical variogram."""
+
+    max_dist: float
+    n_bins: int
+    n_procs: int
+    kind: str = "Semivariogram"
+
+
+@dataclass
+class EmpiricalVariogram:
+    """Empirical variogram"""
+
+    df: pd.DataFrame
+    config: VarioConfig
+    timestamp: str
+    timedeltas: list[int]
 
 
 class Field:
@@ -166,12 +187,7 @@ class MultiField:
         df["i"], df["j"] = i, j
         return df.set_index(["i", "j", df.index])
 
-    def empirical_variograms(
-        self,
-        max_dist: float,
-        n_bins: int = 30,
-        kind: str = "semivariogram",
-    ) -> pd.DataFrame:
+    def empirical_variograms(self, config: VarioConfig) -> EmpiricalVariogram:
         """Compute empirical variogram of the specified kind for each field in the multifield and the cross-variogram of the specified kind for each pair of fields.
 
         Parameters:
@@ -181,17 +197,19 @@ class MultiField:
         Returns:
             df: multi-index datafame with first two indices corresponding to the field ids used in the calculation
         """
-        if kind == "covariogram":
+        if config.kind == "Covariogram":
             is_cov = True
         else:
             is_cov = False
         variograms = [
-            self.get_variogram(i, j, max_dist, n_bins, is_cov)
+            self.get_variogram(i, j, config.max_dist, config.n_bins, is_cov)
             for i in range(self.n_procs)
             for j in range(self.n_procs)
             if i <= j
         ]
-        return pd.concat(variograms)
+        return EmpiricalVariogram(
+            pd.concat(variograms), config, self.timestamp, self.timedeltas
+        )
 
 
 def _check_length_match(*args):

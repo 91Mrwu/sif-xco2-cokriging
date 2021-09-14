@@ -5,8 +5,8 @@ import pandas as pd
 import scipy.special as sps
 from scipy.optimize import minimize
 
-from spatial_tools import pre_post_diag
-from fields import MultiField
+from spatial_tools import pre_post_diag, get_group_ids
+from fields import EmpiricalVariogram
 
 
 class MarginalParam:
@@ -227,69 +227,6 @@ class FullBivariateMatern:
         )
         return sill - self.cross_covariance(i, j, h)
 
-    @staticmethod
-    def _weighted_least_squares(
-        ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray
-    ) -> float:
-        """Computes the weighted least squares cost specified by Cressie (1985)."""
-        zeros = np.argwhere(yfit == 0.0)
-        non_zero = np.argwhere(yfit != 0.0)
-        wls = np.zeros_like(yfit)
-        wls[zeros] = (
-            bin_counts[zeros] * ydata[zeros] ** 2
-        )  # NOTE: is this wrong to do? (for variograms with nonzero nugget, it won't even come up)
-        wls[non_zero] = (
-            bin_counts[non_zero]
-            * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
-        )
-        return np.sum(wls)
-
-    def _map_fit(self, df_group: pd.DataFrame) -> pd.DataFrame:
-        """Creates a new `fit` column with the semivariogram model evaluated at `bin_centers`."""
-        i = df_group.index.get_level_values("i")[0]
-        j = df_group.index.get_level_values("j")[0]
-        if i == j:
-            df_group["fit"] = self.semivariance(i, df_group["bin_center"].values)
-        else:
-            df_group["fit"] = self.cross_semivariance(
-                i, j, df_group["bin_center"].values
-            )
-        return df_group
-
-    def _composite_wls(self, p, df_vario: pd.DataFrame) -> float:
-        """Composite WLS cost function."""
-        self.params.set_values(p)
-        df_vario = df_vario.groupby(level=[0, 1]).apply(self._map_fit)
-        return self._weighted_least_squares(
-            df_vario["bin_mean"].values,
-            df_vario["fit"].values,
-            df_vario["bin_count"].values,
-        )
-
-    def fit(self, mf: MultiField, max_dist: float = None, n_bins: int = 30):
-        """Fit the model paramters to empirical (cross-) semivariograms *simultaneously* using composite weighted least squares.
-
-        Reference: Extension of Cressie (1985)
-        """
-        if max_dist is None:
-            max_dist = 0.5 * mf.calc_dist_matrix((0, 0))
-        df_vario = mf.empirical_variograms(max_dist, n_bins=n_bins)
-        init_params = self.params.reset_values().get_values()
-        bounds = self.params.get_bounds()
-        optim_result = minimize(
-            self._composite_wls,
-            init_params,
-            args=(df_vario),
-            method="L-BFGS-B",
-            bounds=bounds,
-        )
-        if optim_result.success == False:
-            warnings.warn("ERROR: optimization did not converge.")
-        # TODO: check model validity
-        self.params.set_values(optim_result.x)
-        self.wls = optim_result.fun
-        return self
-
     def get_variogram(self, i: int, j: int, h: np.ndarray, kind: str) -> pd.DataFrame:
         """Document!"""
         if kind == "covariogram":
@@ -315,7 +252,72 @@ class FullBivariateMatern:
         ]
         return pd.concat(variograms)
 
-    # prediction stuff
+    # Model fitting
+
+    @staticmethod
+    def _weighted_least_squares(
+        ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray
+    ) -> float:
+        """Computes the weighted least squares cost specified by Cressie (1985)."""
+        zeros = np.argwhere(yfit == 0.0)
+        non_zero = np.argwhere(yfit != 0.0)
+        wls = np.zeros_like(yfit)
+        wls[zeros] = (
+            bin_counts[zeros] * ydata[zeros] ** 2
+        )  # NOTE: is this wrong to do? (for variograms with nonzero nugget, it won't even come up)
+        wls[non_zero] = (
+            bin_counts[non_zero]
+            * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
+        )
+        return np.sum(wls)
+
+    def _map_fit(self, df_group: pd.DataFrame) -> pd.DataFrame:
+        """Creates a new `fit` column with the semivariogram model evaluated at `bin_centers`."""
+        i, j = get_group_ids(df_group)
+        if i == j:
+            df_group["fit"] = self.semivariance(i, df_group["bin_center"].values)
+        else:
+            df_group["fit"] = self.cross_semivariance(
+                i, j, df_group["bin_center"].values
+            )
+        return df_group
+
+    def _composite_wls(self, p, df_vario: pd.DataFrame) -> float:
+        """Composite WLS cost function."""
+        self.params.set_values(p)
+        df_vario = df_vario.groupby(level=[0, 1]).apply(self._map_fit)
+        return self._weighted_least_squares(
+            df_vario["bin_mean"].values,
+            df_vario["fit"].values,
+            df_vario["bin_count"].values,
+        )
+
+    def fit(self, estimate: EmpiricalVariogram):
+        """Fit the model paramters to empirical (cross-) semivariograms *simultaneously* using composite weighted least squares.
+
+        Reference: Extension of Cressie (1985)
+        """
+        if estimate.config.n_procs != self.n_procs:
+            raise ValueError(
+                "Number of theoretical processes different from empirical processes."
+            )
+        init_params = self.params.reset_values().get_values()
+        bounds = self.params.get_bounds()
+        optim_result = minimize(
+            self._composite_wls,
+            init_params,
+            args=(estimate.df),
+            method="L-BFGS-B",
+            bounds=bounds,
+        )
+        if optim_result.success == False:
+            warnings.warn("ERROR: optimization did not converge.")
+        # TODO: check model validity
+        self.params.set_values(optim_result.x)
+        self.fit_result = FittedVariogram(self, estimate, optim_result.fun)
+        return self
+
+    # Prediction
 
     def cross_covariance_pred(self, dist_blocks):
         """Computes the cross-covariance vectors for prediction distances."""
@@ -365,3 +367,19 @@ class FullBivariateMatern:
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
         return pre_post_diag(self.fields.joint_std_inverse, cov_mat)
+
+
+class FittedVariogram:
+    """Model parameters and theoretical variogram for the correponding emprical variogram."""
+
+    def __init__(
+        self, model: FullBivariateMatern, estimate: EmpiricalVariogram, cost: float
+    ) -> None:
+        self.config = estimate.config
+        self.timestamp = estimate.timestamp
+        self.timedeltas = estimate.timedeltas
+        self.df_empirical = estimate.df
+        h = np.linspace(0, self.df_empirical["bin_center"].max(), 100)
+        self.df_theoretical = model.variograms(h)
+        self.params = model.params
+        self.cost = cost

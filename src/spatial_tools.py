@@ -1,5 +1,6 @@
 import numpy as np
-import xarray as xr
+from pandas import DataFrame
+from xarray import DataArray
 
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
@@ -13,7 +14,7 @@ def fit_linear_trend(da):
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
     x = da.mean(dim=["lat", "lon"])
     trend = simple_linear_regression(x.values)
-    return xr.DataArray(trend, dims=["time"], coords={"time": da.time})
+    return DataArray(trend, dims=["time"], coords={"time": da.time})
 
 
 def fit_ols(ds, data_name, covar_names: list):
@@ -81,3 +82,10 @@ def pre_post_diag(u, A, v=None):
         v = u
     return np.matmul(np.diag(u), np.matmul(A, np.diag(v)))
     # return np.diag(u) @ A @ np.diag(v)  # matmul doesn't play with numba
+
+
+def get_group_ids(group: DataFrame):
+    """Returns the group ids as a tuple (i, j)."""
+    i = group.index.get_level_values("i")[0]
+    j = group.index.get_level_values("j")[0]
+    return i, j

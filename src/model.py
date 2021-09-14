@@ -1,40 +1,39 @@
-"""
-This will be the main module.
-It will define the univariate and bivariate models, along with parameter bounds (getter and setter)
-It will provide an interface to model fitting using a variography class (with args)
-It will provide an interface to model prediction using a cokriging class (with args, mainly prediction locations)
-"""
+import warnings
+
 import numpy as np
 import pandas as pd
-
 import scipy.special as sps
+from scipy.optimize import minimize
 
-# from scipy.linalg import cho_factor, cho_solve, LinAlgError
-# from scipy.optimize import minimize
-
-import spatial_tools
-import variography as vg
+from spatial_tools import pre_post_diag
+from fields import MultiField
 
 
 class MarginalParam:
     """Multivariate marginal Matern covariance parameter."""
 
-    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
+    def __init__(
+        self, name: str, default: float, bounds: tuple, n_procs: int = 2
+    ) -> None:
         self.name = name
-        self.dim = dim
+        self.n_procs = n_procs
         self.default = default
         self.bounds = bounds
-        self.values = np.nan * np.zeros((dim, dim))
+        self.values = np.nan * np.zeros((n_procs, n_procs))
         np.fill_diagonal(self.values, default)
 
     def get_names(self):
-        return [f"{self.name}_{i+1}{i+1}" for i in range(self.dim)]
+        return [f"{self.name}_{i+1}{i+1}" for i in range(self.n_procs)]
 
     def get_values(self):
         return self.values.diagonal()
 
     def set_values(self, x: np.ndarray):
         np.fill_diagonal(self.values, x)
+        return self
+
+    def reset_values(self):
+        np.fill_diagonal(self.values, self.default)
         return self
 
     def count_params(self):
@@ -57,16 +56,18 @@ class MarginalParam:
 class CrossParam(MarginalParam):
     """Multivariate Matern covariance parameter with cross dependence."""
 
-    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
-        super().__init__(name, default, bounds, dim=dim)
-        self._triu_index = np.triu_indices(dim)
+    def __init__(
+        self, name: str, default: float, bounds: tuple, n_procs: int = 2
+    ) -> None:
+        super().__init__(name, default, bounds, n_procs=n_procs)
+        self._triu_index = np.triu_indices(n_procs)
         self.values[self._triu_index] = default
 
     def get_names(self):
         return [
             f"{self.name}_{i+1}{j+1}"
-            for i in range(self.dim)
-            for j in range(self.dim)
+            for i in range(self.n_procs)
+            for j in range(self.n_procs)
             if i <= j
         ]
 
@@ -77,29 +78,28 @@ class CrossParam(MarginalParam):
         self.values[self._triu_index] = x
         return self
 
+    def reset_values(self):
+        self.values[self._triu_index] = self.default
+        return self
 
-class RhoParam(MarginalParam):
+
+class RhoParam(CrossParam):
     """Multivariate Matern covariance parameter with cross dependence only."""
 
-    def __init__(self, name: str, default: float, bounds: tuple, dim: int = 2) -> None:
-        super().__init__(name, default, bounds, dim=dim)
-        self._triu_index = np.triu_indices(dim, k=1)
+    def __init__(
+        self, name: str, default: float, bounds: tuple, n_procs: int = 2
+    ) -> None:
+        super().__init__(name, default, bounds, n_procs=n_procs)
+        self._triu_index = np.triu_indices(n_procs, k=1)
         self.values[self._triu_index] = default
 
     def get_names(self):
         return [
             f"{self.name}_{i+1}{j+1}"
-            for i in range(self.dim)
-            for j in range(self.dim)
+            for i in range(self.n_procs)
+            for j in range(self.n_procs)
             if i < j
         ]
-
-    def get_values(self):
-        return self.values[self._triu_index]
-
-    def set_values(self, x: np.ndarray):
-        self.values[self._triu_index] = x
-        return self
 
 
 class MaternParams:
@@ -115,11 +115,11 @@ class MaternParams:
 
     def __init__(self, n_procs: int = 2) -> None:
         self.n_procs = n_procs
-        self.sigma = MarginalParam("sigma", 1.0, (0.4, 3.5), dim=n_procs)
-        self.nu = CrossParam("nu", 1.5, (0.2, 3.5), dim=n_procs)
-        self.len_scale = CrossParam("len_scale", 5e2, (1e2, 2e3), dim=n_procs)
-        self.nugget = MarginalParam("nugget", 0.0, (0.0, 0.2), dim=n_procs)
-        self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), dim=n_procs)
+        self.sigma = MarginalParam("sigma", 1.0, (0.4, 3.5), n_procs=n_procs)
+        self.nu = CrossParam("nu", 1.5, (0.2, 3.5), n_procs=n_procs)
+        self.len_scale = CrossParam("len_scale", 5e2, (1e2, 2e3), n_procs=n_procs)
+        self.nugget = MarginalParam("nugget", 0.0, (0.0, 0.2), n_procs=n_procs)
+        self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), n_procs=n_procs)
         self._params = [self.sigma, self.nu, self.len_scale, self.nugget, self.rho]
         self.n_params = 0
         for p in self._params:
@@ -141,6 +141,11 @@ class MaternParams:
             p.set_values(vals)
         return self
 
+    def reset_values(self):
+        for p in self._params:
+            p.reset_values()
+        return self
+
     def get_bounds(self):
         return self.to_dataframe()["bounds"].values
 
@@ -155,7 +160,6 @@ class MaternParams:
 
 
 # TODO: add method to check parameter validity (overall pos def and paper specs)
-# NOTE: should this be a subclass of MaternParams?
 class FullBivariateMatern:
     """Full bivariate Matern covariance model (Gneiting et al., 2010).
 
@@ -163,43 +167,157 @@ class FullBivariateMatern:
     - Parameterization follows Rassmussen and Williams (2006; see MaternParams)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        self.n_procs = 2
         self.params = MaternParams(n_procs=2)
 
-    def correlation(self, h: np.ndarray):
-        return matern_correlation(h, *self.params[[1, 2]])
+    def correlation(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        r"""Matern correlation function.
 
-    def covariance(self, i: int, j: int, h: np.ndarray):
-        """Matern covariance function."""
-        # can use, e.g. self.params.sigma.values[i, j]
-        cov = self.params[0] ** 2 * self.correlation(h)
-        cov[h == 0] += self.params[3]
+        Parameters:
+            i, j: process indices
+            h: array of spatial separation distances (lags), e.g., distance matrix
+
+        .. math::
+            \rho(h) =
+            \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
+            \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
+            \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
+        """
+        nu = self.params.nu.values[i, j]
+        len_scale = self.params.len_scale.values[i, j]
+
+        # TODO: add check so that negative distances and correlation values yeild warning.
+        h = np.array(np.abs(h), dtype=np.double)
+        # calculate by log-transformation to prevent numerical errors
+        h_positive_scaled = h[h > 0.0] / len_scale
+        corr = np.ones_like(h)
+        corr[h > 0.0] = np.exp(
+            (1.0 - nu) * np.log(2)
+            - sps.gammaln(nu)
+            + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
+        ) * sps.kv(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
+        # if nu >> 1 we get errors for the farfield, there 0 is approached
+        corr[np.logical_not(np.isfinite(corr))] = 0.0
+        # Matern correlation is positive
+        corr = np.maximum(corr, 0.0)
+        return corr
+
+    def covariance(self, i: int, h: np.ndarray) -> np.ndarray:
+        cov = self.params.sigma.values[i, i] ** 2 * self.correlation(i, i, h)
+        cov[h == 0] += self.params.nugget.values[i, i]
         return cov
 
-    def cross_covariance(self, h: np.ndarray):
+    def cross_covariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
         return (
-            self.params.rho
-            * self.params.sigmas[0]
-            * self.params.sigmas[1]
-            * self.correlation(h)
+            self.params.rho.values[i, j]
+            * np.nanprod(self.params.sigma.values)
+            * self.correlation(i, j, h)
         )
 
-    def semivariance(self):
-        pass
+    def semivariance(self, i: int, h: np.ndarray) -> np.ndarray:
+        return (
+            self.params.sigma.values[i, i] ** 2 * (1.0 - self.correlation(i, i, h))
+            + self.params.nugget.values[i, i]
+        )
 
-    def cross_semivariance(self):
-        pass
+    def cross_semivariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        sill = 0.5 * np.nansum(
+            self.params.sigma.values ** 2 + self.params.nugget.values
+        )
+        return sill - self.cross_covariance(i, j, h)
+
+    @staticmethod
+    def _weighted_least_squares(
+        ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray
+    ) -> float:
+        """Computes the weighted least squares cost specified by Cressie (1985)."""
+        zeros = np.argwhere(yfit == 0.0)
+        non_zero = np.argwhere(yfit != 0.0)
+        wls = np.zeros_like(yfit)
+        wls[zeros] = (
+            bin_counts[zeros] * ydata[zeros] ** 2
+        )  # NOTE: is this wrong to do? (for variograms with nonzero nugget, it won't even come up)
+        wls[non_zero] = (
+            bin_counts[non_zero]
+            * ((ydata[non_zero] - yfit[non_zero]) / yfit[non_zero]) ** 2
+        )
+        return np.sum(wls)
+
+    def _map_fit(self, df_group: pd.DataFrame) -> pd.DataFrame:
+        """Creates a new `fit` column with the semivariogram model evaluated at `bin_centers`."""
+        i = df_group.index.get_level_values("i")[0]
+        j = df_group.index.get_level_values("j")[0]
+        if i == j:
+            df_group["fit"] = self.semivariance(i, df_group["bin_center"].values)
+        else:
+            df_group["fit"] = self.cross_semivariance(
+                i, j, df_group["bin_center"].values
+            )
+        return df_group
+
+    def _composite_wls(self, p, df_vario: pd.DataFrame) -> float:
+        """Composite WLS cost function."""
+        self.params.set_values(p)
+        df_vario = df_vario.groupby(level=[0, 1]).apply(self._map_fit)
+        return self._weighted_least_squares(
+            df_vario["bin_mean"].values,
+            df_vario["fit"].values,
+            df_vario["bin_count"].values,
+        )
+
+    def fit(self, mf: MultiField, max_dist: float = None, n_bins: int = 30):
+        """Fit the model paramters to empirical (cross-) semivariograms *simultaneously* using composite weighted least squares.
+
+        Reference: Extension of Cressie (1985)
+        """
+        if max_dist is None:
+            max_dist = 0.5 * mf.calc_dist_matrix((0, 0))
+        df_vario = mf.empirical_variograms(max_dist, n_bins=n_bins)
+        init_params = self.params.reset_values().get_values()
+        bounds = self.params.get_bounds()
+        optim_result = minimize(
+            self._composite_wls,
+            init_params,
+            args=(df_vario),
+            method="L-BFGS-B",
+            bounds=bounds,
+        )
+        if optim_result.success == False:
+            warnings.warn("ERROR: optimization did not converge.")
+        # TODO: check model validity
+        self.params.set_values(optim_result.x)
+        self.wls = optim_result.fun
+        return self
+
+    def get_variogram(self, i: int, j: int, h: np.ndarray, kind: str) -> pd.DataFrame:
+        """Document!"""
+        if kind == "covariogram":
+            if i == j:
+                v = self.covariance(i, h)
+            else:
+                v = self.cross_covariance(i, j, h)
+        else:
+            if i == j:
+                v = self.semivariance(i, h)
+            else:
+                v = self.cross_semivariance(i, j, h)
+        df = pd.DataFrame({"distance": h, "variogram": v, "i": i, "j": j})
+        return df.set_index(["i", "j", df.index])
+
+    def variograms(self, h: np.ndarray, kind: str = "semivariogram") -> pd.DataFrame:
+        """Produce modelled variograms and cross-variogram(s) of the specified kind for the given separation distances."""
+        variograms = [
+            self.get_variogram(i, j, h, kind)
+            for i in range(self.n_procs)
+            for j in range(self.n_procs)
+            if i <= j
+        ]
+        return pd.concat(variograms)
 
     # prediction stuff
 
-    def pred_covariance(self, dist_mat):
-        """Computes the variance-covariance matrix for prediction location(s).
-
-        NOTE: if nugget is not added here, then cov model needs to be updated in notation
-        """
-        return self.kernel_1.sigma ** 2 * self.kernel_1.correlation(dist_mat)
-
-    def cross_covariance(self, dist_blocks):
+    def cross_covariance_pred(self, dist_blocks):
         """Computes the cross-covariance vectors for prediction distances."""
         c_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
             dist_blocks["block_11"]
@@ -216,7 +334,7 @@ class FullBivariateMatern:
         ), "mismatched dimensions"
         return cov_vecs * self.fields.joint_std_inverse
 
-    def covariance_matrix(self, dist_blocks):
+    def covariance_matrix_pred(self, dist_blocks):
         """Constructs the bivariate Matern covariance matrix.
 
         NOTE: ask about when to add nugget and error variance along diag
@@ -246,99 +364,4 @@ class FullBivariateMatern:
 
         # stack blocks into joint covariance matrix and normalize by standard deviation
         cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
-        return spatial_tools.pre_post_diag(self.fields.joint_std_inverse, cov_mat)
-
-    def empirical_variograms(self, params_guess, n_bins=50, max_dist=None):
-        """Computes and fits semivariograms and a cross-semivariograms via composite WLS.
-
-        NOTE: Kernels could be updated with fitted parameters.
-        """
-        variograms, covariograms, params = vg.variogram_analysis(
-            self.fields, params_guess, n_bins=n_bins, max_dist=max_dist
-        )
-        self.fields.variograms = variograms
-        self.fields.covariograms = covariograms
-
-        # params_arr = np.hstack([params[name] for name in names])
-        # self.set_params(params_arr)
-        return variograms, covariograms, params
-
-    # def neg_log_lik(self, params, dist_blocks):
-    #     """Computes the (negative) log-likelihood of the supplied parameters."""
-    #     # construct joint covariance matrix
-    #     self.set_params(params)
-    #     cov_mat = self.covariance_matrix(dist_blocks)
-
-    #     # inverse and determinant via Cholesky decomposition
-    #     try:
-    #         cho_l, low = cho_factor(cov_mat, lower=True)
-    #     except:
-    #         # covariance matrix is not positive definite
-    #         return np.inf
-
-    #     log_det = np.sum(np.log(np.diag(cho_l)))
-    #     quad_form = np.matmul(
-    #         self.fields.joint_data_vec,
-    #         cho_solve((cho_l, low), self.fields.joint_data_vec),
-    #     )
-
-    #     # negative log-likelihood (up to normalizing constants)
-    #     return log_det + 0.5 * quad_form
-
-    # def fit(self, initial_guess=None, options=None):
-    #     """Fit model parameters by maximum likelihood estimation."""
-    #     # TODO: allow for variable smoothness, maybe use exponential transform for all but rho
-    #     if initial_guess is None:
-    #         initial_guess = list(self.get_params().values())
-    #     bounds = list(self.param_bounds.values())
-    #     dist_blocks = self.fields.get_joint_dists()
-
-    #     # minimize the negative log-likelihood
-    #     optim_res = minimize(
-    #         self.neg_log_lik,
-    #         initial_guess,
-    #         bounds=bounds,
-    #         args=(dist_blocks),
-    #         method="L-BFGS-B",
-    #         options=options,
-    #     )
-    #     self.set_params(optim_res.x)
-    #     if optim_res.success is not True:
-    #         raise Exception(
-    #             "ERROR: optimization did not converge. Terminated with message:"
-    #             f" {optim_res.message}"
-    #         )
-    #     # check parameter validity (Gneiting et al. 2010, or just psd check?)
-    #     # NOTE: this happens (the correct way) in cokrige.call(); should we do it here too?
-    #     # cho_factor(self.covariance_matrix(dist_blocks))
-    #     return self
-
-
-def matern_correlation(h: np.ndarray, nu: float, len_scale: float):
-    r"""Matern correlation function.
-
-    Parameters:
-        h: array of spatial separation distances (lags)
-        nu, len_scale: see MaternCovariance
-
-    .. math::
-        \rho(h) =
-        \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
-        \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
-        \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
-    """
-    # TODO: add check so that negative distances and correlation values yeild warning.
-    h = np.array(np.abs(h), dtype=np.double)
-    # calculate by log-transformation to prevent numerical errors
-    h_positive_scaled = h[h > 0.0] / len_scale
-    corr = np.ones_like(h)
-    corr[h > 0.0] = np.exp(
-        (1.0 - nu) * np.log(2)
-        - sps.gammaln(nu)
-        + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
-    ) * sps.kv(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
-    # if nu >> 1 we get errors for the farfield, there 0 is approached
-    corr[np.logical_not(np.isfinite(corr))] = 0.0
-    # Matern correlation is positive
-    corr = np.maximum(corr, 0.0)
-    return corr
+        return pre_post_diag(self.fields.joint_std_inverse, cov_mat)

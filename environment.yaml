@@ -17,6 +17,7 @@ dependencies:
   - numba
   - pandas
   - scipy
+  - numba-scipy
   # Science tools
   - geopy
   - regionmask

@@ -1,5 +1,12 @@
 import warnings
 
+# TODO: implement numba for speed
+from numba import njit
+
+# from numba.experimental import jitclass
+# from numba import int32, float32
+# import numba_scipy
+
 import numpy as np
 import pandas as pd
 import scipy.special as sps
@@ -286,11 +293,9 @@ class FullBivariateMatern:
         """Composite WLS cost function."""
         self.params.set_values(p)
         df_vario = df_vario.groupby(level=[0, 1]).apply(self._map_fit)
-        return self._weighted_least_squares(
-            df_vario["bin_mean"].values,
-            df_vario["fit"].values,
-            df_vario["bin_count"].values,
-        )
+        ydata, yfit, counts = df_vario[["bin_mean", "fit", "bin_count"]].T.values
+        non_zero = np.argwhere(yfit != 0.0)
+        return _wls(ydata[non_zero], yfit[non_zero], counts[non_zero])
 
     def fit(self, estimate: EmpiricalVariogram):
         """Fit the model paramters to empirical (cross-) semivariograms *simultaneously* using composite weighted least squares.
@@ -383,3 +388,28 @@ class FittedVariogram:
         self.df_theoretical = model.variograms(h)
         self.params = model.params
         self.cost = cost
+
+
+@njit
+def _wls(ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray) -> float:
+    """Computes the weighted least squares cost specified by Cressie (1985)."""
+    return np.sum(bin_counts * ((ydata - yfit) / yfit) ** 2)
+
+
+def _check_cauchyshwarz(covariograms, names):
+    """Check the Cauchy-Shwarz inequality."""
+    name1 = names[0]
+    name2 = names[1]
+    cross_name = f"{name1}:{name2}"
+
+    # NOTE: Not exactly C-S if minimum lag is not 0, but should be close
+    cov1_0 = covariograms[name1][
+        covariograms[name1]["lag"] == np.min(covariograms[name1]["lag"])
+    ][name1][0]
+    cov2_0 = covariograms[name2][
+        covariograms[name2]["lag"] == np.min(covariograms[name2]["lag"])
+    ][name2][0]
+    cross_cov = covariograms[cross_name][cross_name] ** 2
+
+    if np.any(cross_cov > cov1_0 * cov2_0):
+        warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")

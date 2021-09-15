@@ -241,6 +241,15 @@ def resid_coord_avg(mf, axes=None, filename=None):
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
 
+def get_data(field, lon_centers, lat_centers):
+    da = (
+        get_main_coords(field.ds, lon_centers, lat_centers)
+        .sel(time=field.timestamp)[field.data_name]
+        .rename({"lon": "Longitude", "lat": "Latitude"})
+    )
+    return da.T
+
+
 def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
     # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
@@ -250,16 +259,6 @@ def plot_fields(mf, coord_avg=False, filename=None):
 
     extents = [-130, -60, 18, 60]
     lon_centers, lat_centers = set_main_coords()
-    da_xco2 = (
-        get_main_coords(mf.field_1.ds, lon_centers, lat_centers)
-        .sel(time=mf.field_1.timestamp)["xco2"]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
-    da_sif = (
-        get_main_coords(mf.field_2.ds, lon_centers, lat_centers)
-        .sel(time=mf.field_2.timestamp)["sif"]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
@@ -285,7 +284,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         fig.suptitle(title, size=12)
 
     xr.plot.imshow(
-        darray=da_xco2.T,
+        darray=get_data(mf.fields[0], lon_centers, lat_centers),
         transform=ccrs.PlateCarree(),
         ax=ax1,
         cmap=CMAP,
@@ -294,7 +293,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         cbar_kwargs={"label": "Process residuals"},
     )
     xr.plot.imshow(
-        darray=da_sif.T,
+        darray=get_data(mf.fields[1], lon_centers, lat_centers),
         transform=ccrs.PlateCarree(),
         ax=ax2,
         cmap=CMAP,
@@ -307,12 +306,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
         # set_gridlines_new(ax)
         prep_axes(ax, extents)
 
-    ax1.set_title(
-        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=12
-    )
-    ax2.set_title(
-        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=12
-    )
+    ax1.set_title(f"XCO$_2$: {mf.fields[0].timestamp}", fontsize=12)
+    ax2.set_title(f"SIF: {mf.fields[1].timestamp}", fontsize=12)
 
     if coord_avg:
         # resid_coord_avg(mf, f_axs[1, 0:])
@@ -341,7 +336,10 @@ def plot_empirical_group(ids, group, fit_result, ax):
         ax[idx].set_ylabel(fit_result.scale_lab, fontsize=fit_result.fontsize)
         if fit_result.scale_lab.lower() != "covariance":
             ax[idx].set_ylim(bottom=0)
-    ax[idx].set_xlabel("Separation distance (km)", fontsize=fit_result.fontsize)
+    ax[idx].set_xlabel(
+        f"Separation distance ({fit_result.config.dist_units})",
+        fontsize=fit_result.fontsize,
+    )
     ax[idx].legend()
 
 
@@ -364,7 +362,6 @@ def plot_variograms(
 ):
     # TODO: add bar chart (or number) indicating bin count
     # TODO: provide parameters in table
-    # TODO: put dist_units in config
     fit_result.fontsize = fontsize
     if fit_result.config.kind == "Covariogram":
         fit_result.scale_lab = "Covariance"
@@ -393,7 +390,8 @@ def plot_variograms(
     fig.suptitle(
         f"{kind}s and cross-{kind.lower()} for {data_names[0]} and"
         f" {data_names[1]} residuals\n {fit_result.timestamp}, 4x5-degree North"
-        f" America, {fit_result.config.n_bins} bins",
+        f" America, {fit_result.config.n_bins} bins, CompWLS:"
+        f" {np.int(fit_result.cost)}",
         fontsize=fontsize,
         y=1.1,
     )

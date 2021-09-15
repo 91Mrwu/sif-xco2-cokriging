@@ -10,14 +10,33 @@ from xarray import Dataset
 import spatial_tools
 
 
-@dataclass(frozen=True)
 class VarioConfig:
-    """Structure to store configuration parameters for an empirical variogram."""
+    """Structure to store configuration parameters for an empirical variogram.
 
-    max_dist: float
-    n_bins: int
-    n_procs: int
-    kind: str = "Semivariogram"
+    Parameters:
+        dist_units: units in which the distance is measured; default is kilometers
+        fast_dist: indicates whether to a faster distance calculation with a slight sacrifice in accuracy; default is True
+    """
+
+    def __init__(
+        self,
+        max_dist: float,
+        n_bins: int,
+        n_procs: int = 2,
+        kind: str = "Semivariogram",
+        dist_units: str = "km",
+        fast_dist: bool = True,
+    ) -> None:
+        self.max_dist = max_dist
+        self.n_bins = n_bins
+        self.n_procs = n_procs
+        self.kind = kind
+        self.dist_units = dist_units
+        self.fast_dist = fast_dist
+        if self.kind == "Covariogram":
+            self.covariogram = True
+        else:
+            self.covariogram = False
 
 
 @dataclass
@@ -74,8 +93,6 @@ class MultiField:
         covariates: list of lists, each containing the names of the covariates for spatial trend removal
         timestamp: the main timestamp for the multifield, timedeltas are with reference to this value
         timedeltas: list of offsets (by month) with elements corresponding to each dataset (negative = back, positive = forward)
-        dist_units: units in which the distance is measured; default is kilometers
-        fast_dist: indicates whether to a faster distance calculation with a slight sacrifice in accuracy; default is True
     """
 
     def __init__(
@@ -84,14 +101,10 @@ class MultiField:
         covariates: list[list],
         timestamp: np.datetime64,
         timedeltas: list[int],
-        dist_units: str = "km",
-        fast_dist: bool = True,
     ) -> None:
         _check_length_match(datasets, covariates, timedeltas)
         self.timestamp = np.datetime_as_string(timestamp, unit="D")
         self.timedeltas = timedeltas
-        self.dist_units = dist_units
-        self.fast_dist = fast_dist
         self.datasets = datasets
         self.covariates = covariates
         self.fields = np.array(
@@ -111,11 +124,11 @@ class MultiField:
         t0 = datetime.strptime(self.timestamp, "%Y-%m-%d")
         return (t0 + relativedelta(months=timedelta)).strftime("%Y-%m-%d")
 
-    def calc_dist_matrix(self, ids: tuple) -> np.ndarray:
+    def calc_dist_matrix(self, ids: tuple, config: VarioConfig) -> np.ndarray:
         assert len(ids) == 2
         coord_list = [self.fields[i].coords for i in ids]
         return spatial_tools.distance_matrix(
-            *coord_list, units=self.dist_units, fast_dist=self.fast_dist
+            *coord_list, units=config.dist_units, fast_dist=config.fast_dist
         )
 
     # def get_joint_dists(self):
@@ -143,30 +156,28 @@ class MultiField:
     #         ),
     #     }
 
-    def _variogram_cloud(self, i: int, j: int, covariogram: bool) -> pd.DataFrame:
+    def _variogram_cloud(self, i: int, j: int, config: VarioConfig) -> pd.DataFrame:
         """Calculate the (cross-) variogram cloud for corresponding field id's."""
-        dist = self.calc_dist_matrix((i, j))
+        dist = self.calc_dist_matrix((i, j), config)
         if i == j:
             # marginal-variogram
             idx = np.triu_indices(dist.shape[0], k=1, m=dist.shape[1])
             dist = dist[idx]
-            cloud = _cloud_calc(self.fields[[i, i]], covariogram)[idx]
+            cloud = _cloud_calc(self.fields[[i, i]], config.covariogram)[idx]
         else:
             # cross-variogram
             dist = dist.flatten()
-            cloud = _cloud_calc(self.fields[[i, j]], covariogram).flatten()
+            cloud = _cloud_calc(self.fields[[i, j]], config.covariogram).flatten()
 
         assert cloud.shape == dist.shape
         return pd.DataFrame({"distance": dist, "variogram": cloud})
 
-    def get_variogram(
-        self, i: int, j: int, max_dist: float, n_bins: int, covariogram: bool
-    ) -> pd.DataFrame:
+    def get_variogram(self, i: int, j: int, config: VarioConfig) -> pd.DataFrame:
         """Compute the (cross-) variogram of the specified kind for the pair of fields (i, j). Return as a dataframe with bin averages and bin counts."""
-        df_cloud = self._variogram_cloud(i, j, covariogram)
+        df_cloud = self._variogram_cloud(i, j, config)
         # NOTE: if computation becomes slow, max_dist filter could be applied before computing the cloud values
-        df_cloud = df_cloud[df_cloud.distance <= max_dist]
-        bin_centers, bin_edges = _construct_variogram_bins(df_cloud, n_bins)
+        df_cloud = df_cloud[df_cloud.distance <= config.max_dist]
+        bin_centers, bin_edges = _construct_variogram_bins(df_cloud, config.n_bins)
         df_cloud["bin_center"] = pd.cut(
             df_cloud["distance"], bin_edges, labels=bin_centers, include_lowest=True
         )
@@ -197,12 +208,8 @@ class MultiField:
         Returns:
             df: multi-index datafame with first two indices corresponding to the field ids used in the calculation
         """
-        if config.kind == "Covariogram":
-            is_cov = True
-        else:
-            is_cov = False
         variograms = [
-            self.get_variogram(i, j, config.max_dist, config.n_bins, is_cov)
+            self.get_variogram(i, j, config)
             for i in range(self.n_procs)
             for j in range(self.n_procs)
             if i <= j

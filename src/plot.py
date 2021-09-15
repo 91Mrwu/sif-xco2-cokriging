@@ -9,10 +9,12 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
-import cartopy.mpl.ticker as cticker
+
+# import cartopy.mpl.ticker as cticker
 from cmcrameri import cm
 
 from data_utils import set_main_coords, get_main_coords
+from model import FittedVariogram
 
 # Global settings
 XCO2_COLOR = "#4C72B0"
@@ -239,6 +241,15 @@ def resid_coord_avg(mf, axes=None, filename=None):
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
 
+def get_data(field, lon_centers, lat_centers):
+    da = (
+        get_main_coords(field.ds, lon_centers, lat_centers)
+        .sel(time=field.timestamp)[field.data_name]
+        .rename({"lon": "Longitude", "lat": "Latitude"})
+    )
+    return da.T
+
+
 def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
     # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
@@ -248,16 +259,6 @@ def plot_fields(mf, coord_avg=False, filename=None):
 
     extents = [-130, -60, 18, 60]
     lon_centers, lat_centers = set_main_coords()
-    da_xco2 = (
-        get_main_coords(mf.field_1.ds, lon_centers, lat_centers)
-        .sel(time=mf.field_1.timestamp)["xco2"]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
-    da_sif = (
-        get_main_coords(mf.field_2.ds, lon_centers, lat_centers)
-        .sel(time=mf.field_2.timestamp)["sif"]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
@@ -283,7 +284,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         fig.suptitle(title, size=12)
 
     xr.plot.imshow(
-        darray=da_xco2.T,
+        darray=get_data(mf.fields[0], lon_centers, lat_centers),
         transform=ccrs.PlateCarree(),
         ax=ax1,
         cmap=CMAP,
@@ -292,7 +293,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         cbar_kwargs={"label": "Process residuals"},
     )
     xr.plot.imshow(
-        darray=da_sif.T,
+        darray=get_data(mf.fields[1], lon_centers, lat_centers),
         transform=ccrs.PlateCarree(),
         ax=ax2,
         cmap=CMAP,
@@ -305,12 +306,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
         # set_gridlines_new(ax)
         prep_axes(ax, extents)
 
-    ax1.set_title(
-        f"XCO$_2$: {pd.to_datetime(da_xco2.time.values).strftime('%Y-%m')}", fontsize=12
-    )
-    ax2.set_title(
-        f"SIF: {pd.to_datetime(da_sif.time.values).strftime('%Y-%m')}", fontsize=12
-    )
+    ax1.set_title(f"XCO$_2$: {mf.fields[0].timestamp}", fontsize=12)
+    ax2.set_title(f"SIF: {mf.fields[1].timestamp}", fontsize=12)
 
     if coord_avg:
         # resid_coord_avg(mf, f_axs[1, 0:])
@@ -320,95 +317,82 @@ def plot_fields(mf, coord_avg=False, filename=None):
         fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
-def param_labels(params):
-    p = np.round_(params, decimals=3)
-    fit_1 = f"sigma: {p[0]}\n nu: {p[1]}\n len_scale: {p[2]}\n tau: {p[3]}"
-    fit_2 = f"sigma: {p[7]}\n nu: {p[8]}\n len_scale: {p[9]}\n tau: {p[10]}"
-    fit_cross = f"nu: {p[4]}\nlen_scale: {p[5]}\nrho: {p[6]}"
-    return {"fit_1": fit_1, "fit_2": fit_2, "fit_cross": fit_cross}
-
-
-def plot_model(df_fit, params, ax):
-    labels = param_labels(params)
-    for i, fname in enumerate(["fit_1", "fit_cross", "fit_2"]):
-        ax[i].plot(
-            df_fit["distance"],
-            df_fit[fname],
-            linestyle="--",
-            color="black",
-            label="Fitted model",
+def plot_empirical_group(ids, group, fit_result, ax):
+    idx = np.sum(ids)
+    group.plot(
+        x="bin_center",
+        y="bin_mean",
+        kind="scatter",
+        color="black",
+        alpha=0.8,
+        ax=ax[idx],
+        label=f"Empirical {fit_result.config.kind.lower()}",
+    )
+    if idx == 1:
+        ax[idx].set_ylabel(
+            f"Cross-{fit_result.scale_lab.lower()}", fontsize=fit_result.fontsize
         )
-        if i != 1:
-            ax[i].text(
-                0.95,
-                0.05,
-                labels[fname],
-                transform=ax[i].transAxes,
-                ha="right",
-                va="bottom",
-                size=12,
-            )
-    ax[1].text(
-        0.05,
-        0.05,
-        labels["fit_cross"],
-        transform=ax[1].transAxes,
-        ha="left",
-        va="bottom",
-        size=12,
+    else:
+        ax[idx].set_ylabel(fit_result.scale_lab, fontsize=fit_result.fontsize)
+        if fit_result.scale_lab.lower() != "covariance":
+            ax[idx].set_ylim(bottom=0)
+    ax[idx].set_xlabel(
+        f"Separation distance ({fit_result.config.dist_units})",
+        fontsize=fit_result.fontsize,
+    )
+    ax[idx].legend()
+
+
+def plot_model_group(ids, group, ax):
+    idx = np.sum(ids)
+    ax[idx].plot(
+        group["distance"],
+        group["variogram"],
+        linestyle="--",
+        color="black",
+        label="Fitted model",
     )
 
 
 def plot_variograms(
-    res_obj,
-    timestamp,
-    timedelta,
-    params=None,
-    type_lab="Semivariogram",
-    scale_lab="Semivariance",
-    filename=None,
+    fit_result: FittedVariogram,
+    data_names: list[str],
+    fontsize: int = 12,
+    filename: str = None,
 ):
+    # TODO: add bar chart (or number) indicating bin count
+    # TODO: provide parameters in table
+    fit_result.fontsize = fontsize
+    if fit_result.config.kind == "Covariogram":
+        fit_result.scale_lab = "Covariance"
+    else:
+        fit_result.scale_lab = "Semivariance"
+
     fig, ax = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
-    lags = res_obj["xco2"]["bin_center"].values
-    bin_width = lags[2] - lags[1]
+    groups1 = fit_result.df_empirical.groupby(level=[0, 1])
+    for ids, df_group in groups1:
+        plot_empirical_group(ids, df_group, fit_result, ax)
 
-    for i, var in enumerate(["xco2", "xco2:sif", "sif"]):
-        df = res_obj[var]
-        df.plot(
-            x="bin_center",
-            y="bin_mean",
-            kind="scatter",
-            color="black",
-            alpha=0.8,
-            ax=ax[i],
-            label=f"Empirical {type_lab.lower()}",
-        )
-        if i == 1:
-            ax[i].set_ylabel(f"Cross-{scale_lab.lower()}", fontsize=12)
-        else:
-            ax[i].set_ylabel(scale_lab, fontsize=12)
-            if scale_lab.lower() != "covariance":
-                ax[i].set_ylim(bottom=0)
-        ax[i].set_title(var, fontsize=12)
-        ax[i].set_xlabel("Separation distance (km)", fontsize=12)
-        ax[i].legend()
-        ax[i].tick_params(axis="both", which="major", labelsize=12)
+    groups2 = fit_result.df_theoretical.groupby(level=[0, 1])
+    for ids, df_group in groups2:
+        plot_model_group(ids, df_group, ax)
 
-    if "fit" in res_obj.keys() and params is not None:
-        plot_model(res_obj["fit"], params, ax)
-
-    ax[0].set_title(f"{type_lab}: XCO$_2$", fontsize=12)
+    kind = fit_result.config.kind
+    ax[0].set_title(f"{kind}: {data_names[0]}", fontsize=fontsize)
     ax[1].set_title(
-        f"Cross-{type_lab.lower()}: XCO$_2$ vs SIF at {np.abs(timedelta)} month(s) lag",
-        fontsize=12,
+        f"Cross-{kind.lower()}: {data_names[0]} vs {data_names[1]} at"
+        f" {np.abs(fit_result.timedeltas[1])} month(s) lag",
+        fontsize=fontsize,
     )
-    ax[2].set_title(f"{type_lab}: SIF", fontsize=12)
+    ax[2].set_title(f"{kind}: {data_names[1]}", fontsize=fontsize)
 
     fig.suptitle(
-        f"{type_lab}s and cross-{type_lab.lower()} for XCO$_2$ and SIF residuals\n"
-        f" {timestamp}, 4x5-degree North America, bin width {np.int(bin_width)} km",
-        fontsize=12,
+        f"{kind}s and cross-{kind.lower()} for {data_names[0]} and"
+        f" {data_names[1]} residuals\n {fit_result.timestamp}, 4x5-degree North"
+        f" America, {fit_result.config.n_bins} bins, CompWLS:"
+        f" {np.int(fit_result.cost)}",
+        fontsize=fontsize,
         y=1.1,
     )
 

@@ -1,7 +1,6 @@
-# import warnings
-
 import numpy as np
-import xarray as xr
+from pandas import DataFrame
+from xarray import DataArray
 
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
@@ -15,7 +14,7 @@ def fit_linear_trend(da):
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
     x = da.mean(dim=["lat", "lon"])
     trend = simple_linear_regression(x.values)
-    return xr.DataArray(trend, dims=["time"], coords={"time": da.time})
+    return DataArray(trend, dims=["time"], coords={"time": da.time})
 
 
 def fit_ols(ds, data_name, covar_names: list):
@@ -70,26 +69,6 @@ def distance_matrix(X1, X2, units="km", fast_dist=False):
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
 
 
-# def match_data_locations(field_1, field_2):
-#     """Only keep data at shared locations"""
-#     df_1 = pd.DataFrame(
-#         {
-#             "lat": field_1.coords[:, 0],
-#             "lon": field_1.coords[:, 1],
-#             "values": field_1.values,
-#         }
-#     )
-#     df_2 = pd.DataFrame(
-#         {
-#             "lat": field_2.coords[:, 0],
-#             "lon": field_2.coords[:, 1],
-#             "values": field_2.values,
-#         }
-#     )
-#     df = pd.merge(df_1, df_2, on=["lat", "lon"], suffixes=("_1", "_2"))
-#     return df.values_1, df.values_2
-
-
 # TODO: test whether numba is actually faster here using toy arrays
 # @njit
 def pre_post_diag(u, A, v=None):
@@ -103,3 +82,10 @@ def pre_post_diag(u, A, v=None):
         v = u
     return np.matmul(np.diag(u), np.matmul(A, np.diag(v)))
     # return np.diag(u) @ A @ np.diag(v)  # matmul doesn't play with numba
+
+
+def get_group_ids(group: DataFrame):
+    """Returns the group ids as a tuple (i, j)."""
+    i = group.index.get_level_values("i")[0]
+    j = group.index.get_level_values("j")[0]
+    return i, j

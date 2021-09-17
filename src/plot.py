@@ -241,12 +241,8 @@ def resid_coord_avg(mf, axes=None, filename=None):
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
 
-def get_data(field, lon_centers, lat_centers):
-    da = (
-        get_main_coords(field.ds, lon_centers, lat_centers)
-        .sel(time=field.timestamp)[field.data_name]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
+def get_data(field):
+    da = field.ds_main[field.data_name].rename({"lon": "Longitude", "lat": "Latitude"})
     return da.T
 
 
@@ -255,10 +251,8 @@ def plot_fields(mf, coord_avg=False, filename=None):
     # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
     PROJ = ccrs.PlateCarree()
     CMAP = cm.roma.reversed()
-    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
-
     extents = [-130, -60, 18, 60]
-    lon_centers, lat_centers = set_main_coords()
+    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
     if coord_avg:
         # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
@@ -284,7 +278,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         fig.suptitle(title, size=12)
 
     xr.plot.imshow(
-        darray=get_data(mf.fields[0], lon_centers, lat_centers),
+        darray=get_data(mf.fields[0]),
         transform=ccrs.PlateCarree(),
         ax=ax1,
         cmap=CMAP,
@@ -293,7 +287,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         cbar_kwargs={"label": "Process residuals"},
     )
     xr.plot.imshow(
-        darray=get_data(mf.fields[1], lon_centers, lat_centers),
+        darray=get_data(mf.fields[1]),
         transform=ccrs.PlateCarree(),
         ax=ax2,
         cmap=CMAP,

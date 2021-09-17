@@ -1,15 +1,13 @@
 import warnings
 
-# TODO: implement numba for speed
-from numba import njit
-
+# TODO: implement numba in classes for speed
 # from numba.experimental import jitclass
-# from numba import int32, float32
-# import numba_scipy
 
+from numba import njit, vectorize, float64
 import numpy as np
 import pandas as pd
 import scipy.special as sps
+import numba_scipy
 from scipy.optimize import minimize
 
 from spatial_tools import pre_post_diag, get_group_ids
@@ -179,36 +177,9 @@ class FullBivariateMatern:
         self.params = MaternParams(n_procs=2)
 
     def correlation(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
-        r"""Matern correlation function.
-
-        Parameters:
-            i, j: process indices
-            h: array of spatial separation distances (lags), e.g., distance matrix
-
-        .. math::
-            \rho(h) =
-            \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
-            \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
-            \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
-        """
         nu = self.params.nu.values[i, j]
         len_scale = self.params.len_scale.values[i, j]
-
-        # TODO: add check so that negative distances and correlation values yeild warning.
-        h = np.array(np.abs(h), dtype=np.double)
-        # calculate by log-transformation to prevent numerical errors
-        h_positive_scaled = h[h > 0.0] / len_scale
-        corr = np.ones_like(h)
-        corr[h > 0.0] = np.exp(
-            (1.0 - nu) * np.log(2)
-            - sps.gammaln(nu)
-            + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
-        ) * sps.kv(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
-        # if nu >> 1 we get errors for the farfield, there 0 is approached
-        corr[np.logical_not(np.isfinite(corr))] = 0.0
-        # Matern correlation is positive
-        corr = np.maximum(corr, 0.0)
-        return corr
+        return _matern_correlation(nu, len_scale, h)
 
     def covariance(self, i: int, h: np.ndarray) -> np.ndarray:
         cov = self.params.sigma.values[i, i] ** 2 * self.correlation(i, i, h)
@@ -388,6 +359,46 @@ class FittedVariogram:
         self.df_theoretical = model.variograms(h)
         self.params = model.params
         self.cost = cost
+
+
+@vectorize([float64(float64, float64)])
+def _mod_bessel(nu: float, h: float):
+    return sps.kv(nu, h)
+
+
+@njit
+def _matern_correlation(nu: float, len_scale: float, h: np.ndarray) -> np.ndarray:
+    r"""Matern correlation function.
+
+    Parameters:
+        nu: smoothness parameter
+        len_scale: length scale parameter
+        h: array of spatial separation distances (lags), e.g., distance matrix
+
+    Returns:
+        array of correlations with dimension = shape(h)
+
+    .. math::
+        \rho(h) =
+        \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
+        \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
+        \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
+    """
+    # TODO: add check so that negative distances and correlation values yeild warning.
+    h = np.abs(h)
+    # calculate by log-transformation to prevent numerical errors
+    h_positive_scaled = h[h > 0.0] / len_scale
+    corr = np.ones_like(h)
+    corr[h > 0.0] = np.exp(
+        (1.0 - nu) * np.log(2)
+        - sps.gammaln(nu)
+        + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
+    ) * _mod_bessel(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
+    # if nu >> 1 we get errors for the farfield, there 0 is approached
+    corr[np.logical_not(np.isfinite(corr))] = 0.0
+    # Matern correlation is positive
+    corr = np.maximum(corr, 0.0)
+    return corr
 
 
 @njit

@@ -1,10 +1,21 @@
 """
-Need three classes: variogram, covariance_model, prediction (this one)
+Steps:
+[x] recover the data values along the main grid points only (i.e., original 4x5-degree grid)
+2. setup prediction locations with resultion 0.5x0.5-degree (land only)
+3. precompute the grand-covariance matrix blocks for all data locations
+4. for a given prediction location, find the data indices within a max_dist for each dataset
+    3.1 if there are more than N points in that window, then subsample
+5. collect the block covariance matrix and the stacked data vector at the correct indices
+4. compute covariance arrays between prediction locations and data locations
+5. compute prediction of residual process
+6. compute the uncertainty for the residuals
+7. post-process the predicted residuals
+    7.1. predict the mean surface at prediction (standardized) locations or (standardized) evi [need to update EVI dataset for this]
+    7.2. multiply by the scale factor and add the (constant) spatial mean
+    7.3. add the spatial trend surface
+    7.4. add the temporal trend value
+    7.5. multiply diagonal elements of uncertainty value by scale factor squared, then take the square root of that value (gives pred uncertainty)
 
-- covariance_model is the main class
-- variogram fits and sets the parameters of covariance_model
-- prediction takes the covariance model and produces cokriging predictions (simple cokriging for residual process only)
-- predictions are provided back to a separate method which maps them back to the data space
 """
 
 import warnings
@@ -15,6 +26,10 @@ from scipy.interpolate import griddata
 
 import spatial_tools
 import model
+
+
+def predict_grid():
+    pass
 
 
 class Cokrige:

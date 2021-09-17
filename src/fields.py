@@ -8,6 +8,7 @@ import pandas as pd
 from xarray import Dataset
 
 import spatial_tools
+from data_utils import get_main_coords
 
 
 class VarioConfig:
@@ -58,6 +59,7 @@ class Field:
         self.timestamp = timestamp
         self.data_name, self.var_name = _get_field_names(ds)
         self.ds = _preprocess_ds(ds, timestamp, covariates)
+        self.ds_main = get_main_coords(self.ds).sel(time=timestamp)
         df = self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
         self.coords = df[["lat", "lon"]].values
         self.values = df[self.data_name].values
@@ -68,7 +70,7 @@ class Field:
         self.variance_estimate = df[self.var_name].values
         self.covariates = df[covariates]
 
-    def to_xarray(self):
+    def to_xarray(self) -> Dataset:
         """Converts the field to an xarray dataset."""
         return (
             pd.DataFrame(

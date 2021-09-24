@@ -61,14 +61,20 @@ class Field:
         self.ds = _preprocess_ds(ds, timestamp, covariates)
         self.ds_main = get_main_coords(self.ds).sel(time=timestamp)
         df = self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
+        df_main = (
+            self.ds_main.to_dataframe().reset_index().dropna(subset=[self.data_name])
+        )
         self.coords = df[["lat", "lon"]].values
+        self.coords_main = df_main[["lat", "lon"]].values
         self.values = df[self.data_name].values
+        self.values_main = df_main[self.data_name].values
         self.temporal_trend = self.ds.attrs["temporal_trend"]
         self.spatial_trend = df["spatial_trend"].values
         self.spatial_mean = self.ds.attrs["spatial_mean"]
         self.scale_fact = self.ds.attrs["scale_fact"]
         self.variance_estimate = df[self.var_name].values
         self.covariates = df[covariates]
+        self.size = len(self.values)
 
     def to_xarray(self) -> Dataset:
         """Converts the field to an xarray dataset."""
@@ -116,6 +122,7 @@ class MultiField:
             ]
         )
         self.n_procs = len(self.fields)
+        self.n_data = self._count_data()
         # self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
         # self.joint_std_inverse = np.float_power(
         #     np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1
@@ -126,41 +133,25 @@ class MultiField:
         t0 = datetime.strptime(self.timestamp, "%Y-%m-%d")
         return (t0 + relativedelta(months=timedelta)).strftime("%Y-%m-%d")
 
-    def calc_dist_matrix(self, ids: tuple, config: VarioConfig) -> np.ndarray:
-        assert len(ids) == 2
-        coord_list = [self.fields[i].coords for i in ids]
-        return spatial_tools.distance_matrix(
-            *coord_list, units=config.dist_units, fast_dist=config.fast_dist
-        )
+    def _count_data(self) -> int:
+        """Returns the total number of data values across all fields."""
+        return np.sum([f.size for f in self.fields])
 
-    # def get_joint_dists(self):
-    #     """Computes block distance matrices and returns the blocks in a dict."""
-    #     off_diag = spatial_tools.distance_matrix(
-    #         self.field_1.coords,
-    #         self.field_2.coords,
-    #         units=self.dist_units,
-    #         fast_dist=self.fast_dist,
-    #     )
-    #     return {
-    #         "block_11": spatial_tools.distance_matrix(
-    #             self.field_1.coords,
-    #             self.field_1.coords,
-    #             units=self.dist_units,
-    #             fast_dist=self.fast_dist,
-    #         ),
-    #         "block_12": off_diag,
-    #         "block_21": off_diag.T,
-    #         "block_22": spatial_tools.distance_matrix(
-    #             self.field_2.coords,
-    #             self.field_2.coords,
-    #             units=self.dist_units,
-    #             fast_dist=self.fast_dist,
-    #         ),
-    #     }
+    def calc_dist_matrix(
+        self, ids: tuple, units: str, fast_dist: bool, main: bool = False
+    ) -> np.ndarray:
+        assert len(ids) == 2
+        if main:
+            coord_list = [self.fields[i].coords_main for i in ids]
+        else:
+            coord_list = [self.fields[i].coords for i in ids]
+        return spatial_tools.distance_matrix(
+            *coord_list, units=units, fast_dist=fast_dist
+        )
 
     def _variogram_cloud(self, i: int, j: int, config: VarioConfig) -> pd.DataFrame:
         """Calculate the (cross-) variogram cloud for corresponding field id's."""
-        dist = self.calc_dist_matrix((i, j), config)
+        dist = self.calc_dist_matrix((i, j), config.dist_units, config.fast_dist)
         if i == j:
             # marginal-variogram
             idx = np.triu_indices(dist.shape[0], k=1, m=dist.shape[1])

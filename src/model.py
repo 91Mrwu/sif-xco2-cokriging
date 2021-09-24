@@ -3,14 +3,14 @@ import warnings
 # TODO: implement numba in classes for speed
 # from numba.experimental import jitclass
 
-from numba import njit, vectorize, float64
+from numba import njit, vectorize, guvectorize, float64
 import numpy as np
 import pandas as pd
 import scipy.special as sps
 import numba_scipy
 from scipy.optimize import minimize
 
-from spatial_tools import pre_post_diag, get_group_ids
+from spatial_tools import get_group_ids
 from fields import EmpiricalVariogram
 
 
@@ -230,8 +230,6 @@ class FullBivariateMatern:
         ]
         return pd.concat(variograms)
 
-    # Model fitting
-
     @staticmethod
     def _weighted_least_squares(
         ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray
@@ -293,57 +291,6 @@ class FullBivariateMatern:
         self.fit_result = FittedVariogram(self, estimate, optim_result.fun)
         return self
 
-    # Prediction
-
-    def cross_covariance_pred(self, dist_blocks):
-        """Computes the cross-covariance vectors for prediction distances."""
-        c_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
-            dist_blocks["block_11"]
-        )
-        c_12 = (
-            self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_12"])
-        )
-        cov_vecs = np.hstack((c_11, c_12))
-        # normalize rows of cov_vecs with joint_std_inverse via broadcasting
-        assert (
-            cov_vecs.shape[1] == self.fields.joint_std_inverse.shape[0]
-        ), "mismatched dimensions"
-        return cov_vecs * self.fields.joint_std_inverse
-
-    def covariance_matrix_pred(self, dist_blocks):
-        """Constructs the bivariate Matern covariance matrix.
-
-        NOTE: ask about when to add nugget and error variance along diag
-        """
-        C_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
-            dist_blocks["block_11"]
-        )
-        C_12 = (
-            self.rho
-            * self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_12"])
-        )
-        C_21 = (
-            self.rho
-            * self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_21"])
-        )
-        C_22 = self.kernel_2.sigma ** 2 * self.kernel_2.correlation(
-            dist_blocks["block_22"]
-        )
-
-        # add nugget and measurement error variance along diagonals
-        np.fill_diagonal(C_11, C_11.diagonal() + self.kernel_1.nugget + self.sigep_11)
-        np.fill_diagonal(C_22, C_22.diagonal() + self.kernel_2.nugget + self.sigep_22)
-
-        # stack blocks into joint covariance matrix and normalize by standard deviation
-        cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
-        return pre_post_diag(self.fields.joint_std_inverse, cov_mat)
-
 
 class FittedVariogram:
     """Model parameters and theoretical variogram for the correponding emprical variogram."""
@@ -361,12 +308,14 @@ class FittedVariogram:
         self.cost = cost
 
 
-@vectorize([float64(float64, float64)])
+# @vectorize([float64(float64, float64)], nopython=True)
+# @guvectorize([(float64, float64[:], float64[:])], "(),(n)->(n)", nopython=True)
+# NOTE: hiccup here is that variogram h is 1d but pred h is 2d
 def _mod_bessel(nu: float, h: float):
     return sps.kv(nu, h)
 
 
-@njit
+# @njit
 def _matern_correlation(nu: float, len_scale: float, h: np.ndarray) -> np.ndarray:
     r"""Matern correlation function.
 

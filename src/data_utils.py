@@ -119,7 +119,7 @@ class GridConfig:
         lat_offset: float = 0,
     ) -> None:
         if not (lon_offset == 0 or lat_offset == 0):
-            raise ValueError("lon_offset and/or lat_offset must be zero")
+            raise ValueError("`lon_offset` and/or `lat_offset` must be zero")
         if extents is None:
             extents = (-180, 180, -90, 90)
         else:
@@ -140,12 +140,17 @@ class SpatialGrid:
         self.lat_bins, self.lat_centers = _prep_bins(config.lat_bounds, config.lat_res)
 
     def bounds_check(self, df: pd.DataFrame) -> bool:
-        return (
+        if not (
             self.lon_bins.min() <= df.lon.min()
             and self.lon_bins.max() >= df.lon.max()
             and self.lat_bins.min() <= df.lat.min()
             and self.lat_bins.max() >= df.lat.max()
-        )
+        ):
+            warnings.warn(
+                "Dataset coordinates not within grid extents; may produce unexpected"
+                f" behavior: ({df.lon.min()}, {df.lon.max()}, {df.lat.min()},"
+                f" {df.lat.max()})"
+            )
 
 
 def _prep_bounds(bounds: tuple, res: float, offset: float) -> tuple:
@@ -162,10 +167,7 @@ def _prep_bins(bounds: tuple, res: float) -> np.ndarray:
 
 
 def regrid(
-    ds: Dataset = None,
-    df: pd.DataFrame = None,
-    extents: list = None,
-    grid_def: dict = None,
+    ds: Dataset = None, df: pd.DataFrame = None, config: GridConfig = None
 ) -> pd.DataFrame:
     """
     Convert dataset to dataframe and assign coordinates using a regular grid.
@@ -175,38 +177,30 @@ def regrid(
     elif df is None:
         warnings.warn("No data provided.")
 
-    grid = global_grid(extents=extents, grid_def=grid_def)
-    if not grid.bounds_check(df):
-        warnings.warn(
-            "dataset coordinates not within extents; may produce unexpected behavior:"
-            f" [{df.lon.min()}, {df.lon.max()}, {df.lat.min()}, {df.lat.max()}]"
-        )
+    if config is None:
+        config = GridConfig()
+    grid = SpatialGrid(config)
+    grid.bounds_check(df)
+
     # overwrite lon-lat values with grid values
-    df["lon"] = pd.cut(df.lon, grid["lon_bins"], labels=grid["lon_centers"]).astype(
-        float
-    )
-    df["lat"] = pd.cut(df.lat, grid["lat_bins"], labels=grid["lat_centers"]).astype(
-        float
-    )
+    df["lon"] = pd.cut(df.lon, grid.lon_bins, labels=grid.lon_centers).astype(float)
+    df["lat"] = pd.cut(df.lat, grid.lat_bins, labels=grid.lat_centers).astype(float)
     return df
 
 
-def land_grid(extents: list = None, grid_def: dict = None) -> pd.DataFrame:
-    """Collect land locations on a regular grid as an array.
-
-    Returns rows with entries [[lat, lon]].
-    """
+def land_grid(config: GridConfig = None) -> pd.DataFrame:
+    """Collect land locations on a regular grid as an array. Returns rows with entries [[lat, lon]]."""
     # establish a fine resolution grid of 0.25 degrees for accuracy
-    fine_res_def = set_grid_def(lon_res=0.25, lat_res=0.25)
-    grid = global_grid(extents, fine_res_def)
+    config_fine = GridConfig(config.extents, lon_res=0.25, lat_res=0.25)
+    grid_fine = SpatialGrid(config_fine)
     land = natural_earth.land_110
-    mask = land.mask(grid["lon_centers"], grid["lat_centers"])
+    mask = land.mask(grid_fine.lon_centers, grid_fine.lat_centers)
     # regrid to desired resolution and remove non-land areas
     df_mask = (
-        regrid(mask, extents=extents, grid_def=grid_def)
+        regrid(ds=mask, config=config)
         .dropna(subset=["region"])
         .groupby(["lon", "lat"])
-        .mean()
+        .mean()  # mean of binaries just reassigns value
         .reset_index()
     )
     return df_mask[["lat", "lon"]].assign(land=lambda x: 1).set_index(["lon", "lat"])
@@ -223,10 +217,8 @@ def monthly_avg(df_grid: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def apply_land_mask(
-    df: pd.DataFrame, extents: list = None, grid_def: dict = None
-) -> pd.DataFrame:
-    df_land = land_grid(extents, grid_def)
+def apply_land_mask(df: pd.DataFrame, config: GridConfig = None) -> pd.DataFrame:
+    df_land = land_grid(config)
     return (
         df.join(df_land, on=["lon", "lat"], how="outer")
         .dropna(subset=["land"])
@@ -236,61 +228,56 @@ def apply_land_mask(
 
 
 def prep_gridded_df(
-    ds: Dataset, extents: list = None, grid_def: dict = None, aggregate: bool = True
+    ds: Dataset, config: GridConfig, aggregate: bool = True
 ) -> pd.DataFrame:
     """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America (land only). Return as data frame."""
-    lon_lwr, lon_upr, lat_lwr, lat_upr = prep_extents(extents, grid_def)
     df = ds.to_dataframe().reset_index()
     bounds = (
-        (df.lon >= lon_lwr)
-        & (df.lon <= lon_upr)
-        & (df.lat >= lat_lwr)
-        & (df.lat <= lat_upr)
+        (df.lon >= config.lon_bounds[0])
+        & (df.lon <= config.lon_bounds[1])
+        & (df.lat >= config.lat_bounds[0])
+        & (df.lat <= config.lat_bounds[1])
     )
     # drop data outside domain extents so it's not included in edge bin averages
     df = df.loc[bounds].reset_index()
-    df_grid = regrid(df=df, extents=extents, grid_def=grid_def)
+    df_grid = regrid(df=df, config=config)
     if "index" in df_grid.columns:
         df_grid = df_grid.drop(columns="index")
     if aggregate:
         df_grid = monthly_avg(df_grid)
-    return apply_land_mask(df_grid, extents, grid_def)
+    return apply_land_mask(df_grid, config)
 
 
 def augment_dataset(ds: Dataset) -> pd.DataFrame:
     """Prepare gridded dataframes for each longitude and latitude offset, and return as a single dataframe."""
-    extents = [-125, -65, 22, 58]
+    extents = (-125, -65, 22, 58)
     lat_offsets = np.linspace(-1.5, 2, 8)
     lon_offsets = np.linspace(-2, 2.5, 10)
     # drop zero offset from one set so there is no repeat of the base coordinates
     lon_offsets = lon_offsets[lon_offsets != 0]
 
-    list_def_lat = [
-        set_grid_def(lon_res=5, lat_res=4, lat_offset=lat_off)
+    config_list_lat = [
+        GridConfig(extents=extents, lon_res=5, lat_res=4, lat_offset=lat_off)
         for lat_off in lat_offsets
     ]
-    list_def_lon = [
-        set_grid_def(lon_res=5, lat_res=4, lon_offset=lon_off)
+    config_list_lon = [
+        GridConfig(extents=extents, lon_res=5, lat_res=4, lon_offset=lon_off)
         for lon_off in lon_offsets
     ]
-    frame_list_lat = [
-        prep_gridded_df(ds, extents, grid_def) for grid_def in list_def_lat
-    ]
-    frame_list_lon = [
-        prep_gridded_df(ds, extents, grid_def) for grid_def in list_def_lon
-    ]
+    frame_list_lat = [prep_gridded_df(ds, config) for config in config_list_lat]
+    frame_list_lon = [prep_gridded_df(ds, config) for config in config_list_lon]
     return pd.concat(frame_list_lat + frame_list_lon)
 
 
 def set_main_coords(
-    extents: list = None, lon_res: float = 5, lat_res: float = 4
+    extents: tuple = None, lon_res: float = 5, lat_res: float = 4
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sets the base coordinates for augmentation reference."""
     if extents is None:
-        extents = [-125, -65, 22, 58]
-    lon_centers = np.arange(extents[0], extents[1] + lon_res, lon_res, dtype=float)
-    lat_centers = np.arange(extents[2], extents[3] + lat_res, lat_res, dtype=float)
-    return lon_centers, lat_centers
+        extents = (-125, -65, 22, 58)
+    config = GridConfig(extents, lon_res=lon_res, lat_res=lat_res)
+    grid = SpatialGrid(config)
+    return grid.lon_centers, grid.lat_centers
 
 
 def get_main_coords(
@@ -310,10 +297,10 @@ def get_main_coords(
 
 
 def produce_climatology_conus(ds: Dataset, freq: str) -> pd.DataFrame:
-    extents = [-125, -65, 22, 58]
-    grid_def = set_grid_def(lon_res=5, lat_res=4)
+    extents = (-125, -65, 22, 58)
+    config = GridConfig(extents, lon_res=5, lat_res=4)
     return (
-        prep_gridded_df(ds, extents=extents, grid_def=grid_def, aggregate=False)
+        prep_gridded_df(ds, config, aggregate=False)
         .dropna(subset=["lon", "lat"])
         .drop(columns=["lon", "lat"])
         .groupby(pd.Grouper(key="time", freq=freq))
@@ -322,23 +309,23 @@ def produce_climatology_conus(ds: Dataset, freq: str) -> pd.DataFrame:
     )
 
 
-def map_transcom(ds: Dataset, ds_tc: Dataset) -> pd.DataFrame:
-    """
-    Regrid dataset to 1-degree grid and merge TransCom regions.
-    """
-    # regrid the dataset to 1-degree
-    df_grid = regrid(ds, lon_res=1, lat_res=1).dropna().reset_index()
+# def map_transcom(ds: Dataset, ds_tc: Dataset) -> pd.DataFrame:
+#     """
+#     Regrid dataset to 1-degree grid and merge TransCom regions.
+#     """
+#     # regrid the dataset to 1-degree
+#     df_grid = regrid(ds, lon_res=1, lat_res=1).dropna().reset_index()
 
-    # get transcom
-    df_regions = ds_tc.to_dataframe().dropna().reset_index()
+#     # get transcom
+#     df_regions = ds_tc.to_dataframe().dropna().reset_index()
 
-    # merge, format, return
-    return (
-        df_grid.merge(df_regions, on=["lon", "lat"], how="inner")
-        .drop(columns=["lon", "lat"])
-        .dropna()
-        .set_index(["time"])
-    )
+#     # merge, format, return
+#     return (
+#         df_grid.merge(df_regions, on=["lon", "lat"], how="inner")
+#         .drop(columns=["lon", "lat"])
+#         .dropna()
+#         .set_index(["time"])
+#     )
 
 
 def to_xarray(coords: np.ndarray, **kwargs) -> Dataset:

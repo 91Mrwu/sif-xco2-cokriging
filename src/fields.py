@@ -123,10 +123,6 @@ class MultiField:
         )
         self.n_procs = len(self.fields)
         self.n_data = self._count_data()
-        # self.joint_data_vec = np.hstack((self.field_1.values, self.field_2.values))
-        # self.joint_std_inverse = np.float_power(
-        #     np.hstack((self.field_1.temporal_std, self.field_2.temporal_std)), -1
-        # )
 
     def _apply_timedelta(self, timedelta: int) -> str:
         """Returns timestamp with month offset by timedelta as string."""

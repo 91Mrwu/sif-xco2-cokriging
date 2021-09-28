@@ -164,7 +164,7 @@ class MaternParams:
         return self
 
 
-# TODO: add method to check parameter validity (overall pos def and paper specs)
+# TODO: add method to check parameter validity (paper specs and perhaps Cauchy-Schwarz)
 class FullBivariateMatern:
     """Full bivariate Matern covariance model (Gneiting et al., 2010).
 
@@ -181,9 +181,10 @@ class FullBivariateMatern:
         len_scale = self.params.len_scale.values[i, j]
         return _matern_correlation(nu, len_scale, h)
 
-    def covariance(self, i: int, h: np.ndarray) -> np.ndarray:
+    def covariance(self, i: int, h: np.ndarray, use_nugget: bool = True) -> np.ndarray:
         cov = self.params.sigma.values[i, i] ** 2 * self.correlation(i, i, h)
-        cov[h == 0] += self.params.nugget.values[i, i]
+        if use_nugget:
+            cov[h == 0] += self.params.nugget.values[i, i]
         return cov
 
     def cross_covariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
@@ -286,7 +287,6 @@ class FullBivariateMatern:
         )
         if optim_result.success == False:
             warnings.warn("ERROR: optimization did not converge.")
-        # TODO: check model validity
         self.params.set_values(optim_result.x)
         self.fit_result = FittedVariogram(self, estimate, optim_result.fun)
         return self
@@ -306,6 +306,16 @@ class FittedVariogram:
         self.df_theoretical = model.variograms(h)
         self.params = model.params
         self.cost = cost
+        self.cs_valid = self.cs_check()
+
+    def cs_check(self):
+        """Check the Cauchy-Shwarz inequality. True passes; False fails."""
+        # constuct upper triangular object of covariances and cross-covariances
+
+        # check that np.all(diag[i] * diag[j] > element[i, j])
+
+        # check that list of bools is all true
+        return None
 
 
 # @vectorize([float64(float64, float64)], nopython=True)
@@ -334,7 +344,7 @@ def _matern_correlation(nu: float, len_scale: float, h: np.ndarray) -> np.ndarra
         \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
     """
     # TODO: add check so that negative distances and correlation values yeild warning.
-    h = np.abs(h)
+    h = np.atleast_1d(np.abs(h))
     # calculate by log-transformation to prevent numerical errors
     h_positive_scaled = h[h > 0.0] / len_scale
     corr = np.ones_like(h)
@@ -354,22 +364,3 @@ def _matern_correlation(nu: float, len_scale: float, h: np.ndarray) -> np.ndarra
 def _wls(ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray) -> float:
     """Computes the weighted least squares cost specified by Cressie (1985)."""
     return np.sum(bin_counts * ((ydata - yfit) / yfit) ** 2)
-
-
-def _check_cauchyshwarz(covariograms, names):
-    """Check the Cauchy-Shwarz inequality."""
-    name1 = names[0]
-    name2 = names[1]
-    cross_name = f"{name1}:{name2}"
-
-    # NOTE: Not exactly C-S if minimum lag is not 0, but should be close
-    cov1_0 = covariograms[name1][
-        covariograms[name1]["lag"] == np.min(covariograms[name1]["lag"])
-    ][name1][0]
-    cov2_0 = covariograms[name2][
-        covariograms[name2]["lag"] == np.min(covariograms[name2]["lag"])
-    ][name2][0]
-    cross_cov = covariograms[cross_name][cross_name] ** 2
-
-    if np.any(cross_cov > cov1_0 * cov2_0):
-        warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")

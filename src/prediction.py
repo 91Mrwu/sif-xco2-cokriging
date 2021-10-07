@@ -11,15 +11,16 @@ Steps:
 [x] compute prediction of residual process
 [x] compute the uncertainty for the residuals
 [x] paralleize across prediction grid
-[] post-process the predicted residuals
-    [] predict the mean surface at prediction (standardized) locations or (standardized) evi [need to update EVI dataset for this]
-    [] multiply by the scale factor and add the (constant) spatial mean
-    [] add the spatial trend surface
-    [] add the temporal trend value
-    [] multiply diagonal elements of uncertainty value by scale factor squared, then take the square root of that value (gives pred uncertainty)
+[x] post-process the predicted residuals
+    [x] predict the mean surface at prediction (standardized) locations or (standardized) evi [need to update EVI dataset for this]
+    [x] multiply predictions and errors by the scale factor
+    [x] add the (constant) spatial mean to predictions
+    [x] add the spatial trend surface to predictions
+    [x] add the temporal trend value to predictions
 
 TODO: 
  - allow for prediction of process [i] rather than process 0 only
+ - prediction results plotting function
 """
 
 import warnings
@@ -27,11 +28,13 @@ from multiprocessing import cpu_count, Pool
 
 import numpy as np
 import pandas as pd
+from xarray import Dataset, DataArray
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 
 from fields import MultiField
 from model import FullBivariateMatern
 from spatial_tools import distance_matrix
+from stat_tools import standardize
 from data_utils import GridConfig, land_grid
 
 # number of paritions for parallel computation
@@ -45,6 +48,7 @@ class Predictor:
         self,
         mod: FullBivariateMatern,
         mf: MultiField,
+        covariates: DataArray = None,
         dist_units: str = "km",
         fast_dist: bool = True,
     ) -> None:
@@ -55,6 +59,7 @@ class Predictor:
         self.n_procs = mod.n_procs
         self.mod = mod
         self.mf = mf
+        self.covariates = covariates
         self.dist_units = dist_units
         self.fast_dist = fast_dist
         self.Sigma = self._cov_blocks()
@@ -74,7 +79,7 @@ class Predictor:
         """
         c0 = self.mod.covariance(0, 0, use_nugget=False)[0]
         df = pd.DataFrame(pcoords)
-        df.columns = ["Latitude", "Longitude"]
+        df.columns = ["lat", "lon"]
 
         if partitions is not None:
             # run prediction in parallel across `n_partitions`
@@ -90,9 +95,10 @@ class Predictor:
             pool.close()
             pool.join()
         else:
+            # process full data as a single chunk
             df_pred = self._predict_chunk(df, c0, max_dist)
 
-        return df_pred
+        return self._postprocess_predictions(df_pred)
 
     def _cov_blocks(self) -> dict:
         """Precomputes each block in the block-covariance matrix, with each block describing the dependence within a process or between processes."""
@@ -239,6 +245,49 @@ class Predictor:
             result_type="expand",
         )
         return df_chunk
+
+    def _postprocess_predictions(self, df: pd.DataFrame) -> Dataset:
+        """Convert prediction results to a dataset and transform to original data scale."""
+        ds = df.set_index(["lon", "lat"]).to_xarray()
+        df_ = df[["lon", "lat"]].copy()
+
+        # Transform predictions and errors to original data scale
+        ds = ds * self.mf.fields[0].ds.attrs["scale_fact"]
+
+        # Add back the constant spatial mean used for standardization
+        ds["pred"] += self.mf.fields[0].ds.attrs["spatial_mean"]
+
+        # Prepare the spatial covariate
+        if self.covariates is None:
+            covariates = df[["lon", "lat"]]
+        else:
+            ds["covariates"] = self.covariates.sel(time=self.mf.timestamp)
+            df_covariates = (
+                ds.to_dataframe()
+                .reset_index()
+                .merge(df_, on=["lon", "lat"], how="right")
+                .dropna(subset=["covariates"])
+            )
+            df_ = df_covariates[["lon", "lat"]].copy()
+            covariates = df_covariates[["covariates"]]
+        # standardize each covariate (each column)
+        covariates = covariates.apply(lambda x: standardize(x), axis=0)
+
+        # Add back the spatial trend surface
+        df_["ols_mean"] = (
+            self.mf.fields[0].ds.attrs["spatial_model"].predict(covariates)
+        )
+        da = (
+            df_.set_index(["lon", "lat"])
+            .to_xarray()
+            .assign_coords(coords={"time": np.datetime64(self.mf.timestamp)})
+        )
+        ds["pred"] += da["ols_mean"]
+
+        # Add back the temporal trend value
+        ds["pred"] += self.mf.fields[0].ds.attrs["temporal_trend"]
+
+        return ds
 
 
 def prediction_coords(

@@ -243,7 +243,9 @@ def _preprocess_ds(ds: Dataset, timestamp: str, covariates: list) -> Dataset:
     ds_field.attrs["temporal_trend"] = ds_field["temporal_trend"].values
 
     # Remove the spatial trend by OLS
-    ds_field["spatial_trend"] = spatial_tools.fit_ols(ds_field, data_name, covariates)
+    ds_field["spatial_trend"], ds_field.attrs["spatial_model"] = spatial_tools.fit_ols(
+        ds_field, data_name, covariates
+    )
     ds_field[data_name] = ds_field[data_name] - ds_field["spatial_trend"]
 
     # Standardize the residuals

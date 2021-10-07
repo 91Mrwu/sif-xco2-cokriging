@@ -230,7 +230,7 @@ def apply_land_mask(df: pd.DataFrame, config: GridConfig = None) -> pd.DataFrame
 def prep_gridded_df(
     ds: Dataset, config: GridConfig, aggregate: bool = True
 ) -> pd.DataFrame:
-    """Aggregate irregular data into a 4x5-degree grid of monthly averages over North America (land only). Return as data frame."""
+    """Aggregate irregular data to a regular grid of monthly averages within the specified extents (land only). Return as data frame."""
     df = ds.to_dataframe().reset_index()
     bounds = (
         (df.lon >= config.lon_bounds[0])

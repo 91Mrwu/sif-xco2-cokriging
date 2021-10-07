@@ -19,7 +19,7 @@ Steps:
     [x] add the temporal trend value to predictions
 
 TODO: 
- - allow for prediction of process [i] rather than process 0 only
+ [x] allow for prediction of process [i] rather than process 0 only
  - prediction results plotting function
 """
 
@@ -65,11 +65,12 @@ class Predictor:
         self.Sigma = self._cov_blocks()
 
     def __call__(
-        self, pcoords: np.ndarray, max_dist: float = 1e3, partitions: int = None
+        self, i: int, pcoords: np.ndarray, max_dist: float = 1e3, partitions: int = None
     ) -> pd.DataFrame:
         """Apply the multivariate local prediction at each location in the specified prediction coordinates.
 
         Parameters:
+            i: index of the process to be predicted
             pcoords: prediction coordinates with format [[lat, lon]]
             max_dist: maximum distance at which data values will be included in prediction
             partitions: number of partitions to split prediction locations into for parallelization
@@ -77,7 +78,8 @@ class Predictor:
         Returns:
             dataframe with predicted values and standard deviations at each location
         """
-        c0 = self.mod.covariance(0, 0, use_nugget=False)[0]
+        self.i = i
+        c0 = self.mod.covariance(self.i, 0, use_nugget=False)[0]
         df = pd.DataFrame(pcoords)
         df.columns = ["lat", "lon"]
 
@@ -120,10 +122,14 @@ class Predictor:
 
     def _pred_cov(self, dists: list) -> list:
         """Computes the covariance and cross-covariance vectors for a set of local distances about a prediction location."""
-        cov_vecs = [
-            self.mod.cross_covariance(0, j, dists[j]) for j in range(1, self.n_procs)
-        ]
-        cov_vecs.insert(0, self.mod.covariance(0, dists[0], use_nugget=False))
+        cov_vecs = list()
+        for j in range(0, self.n_procs):
+            if self.i == j:
+                cov_vecs.append(
+                    self.mod.covariance(self.i, dists[self.i], use_nugget=False)
+                )
+            else:
+                cov_vecs.append(self.mod.cross_covariance(self.i, j, dists[j]))
         # NOTE: do these values need to be rescaled using the data std?
         return cov_vecs
 
@@ -163,7 +169,7 @@ class Predictor:
                     local_cov_blocks[f"{i}{j}"] = self.Sigma[f"{j}{i}"][
                         np.ix_(ix[j], ix[i])
                     ].T
-        # format the data as a vector, the covariance blocks as a matrix, and the prediction covariance as a vector
+        # format the data and prediction covarianceas as vectors, and the covariance blocks as a matrix
         local_data = np.hstack(local_data)
         local_pred_cov = np.hstack(self._pred_cov(local_dists))
         local_cov = np.block(
@@ -252,16 +258,18 @@ class Predictor:
         df_ = df[["lon", "lat"]].copy()
 
         # Transform predictions and errors to original data scale
-        ds = ds * self.mf.fields[0].ds.attrs["scale_fact"]
+        ds = ds * self.mf.fields[self.i].ds.attrs["scale_fact"]
 
         # Add back the constant spatial mean used for standardization
-        ds["pred"] += self.mf.fields[0].ds.attrs["spatial_mean"]
+        ds["pred"] += self.mf.fields[self.i].ds.attrs["spatial_mean"]
 
         # Prepare the spatial covariate
         if self.covariates is None:
             covariates = df[["lon", "lat"]]
         else:
-            ds["covariates"] = self.covariates.sel(time=self.mf.timestamp)
+            ds["covariates"] = self.covariates.sel(
+                time=self.mf.fields[self.i].timestamp
+            )
             df_covariates = (
                 ds.to_dataframe()
                 .reset_index()
@@ -275,17 +283,19 @@ class Predictor:
 
         # Add back the spatial trend surface
         df_["ols_mean"] = (
-            self.mf.fields[0].ds.attrs["spatial_model"].predict(covariates)
+            self.mf.fields[self.i].ds.attrs["spatial_model"].predict(covariates)
         )
         da = (
             df_.set_index(["lon", "lat"])
             .to_xarray()
-            .assign_coords(coords={"time": np.datetime64(self.mf.timestamp)})
+            .assign_coords(
+                coords={"time": np.datetime64(self.mf.fields[self.i].timestamp)}
+            )
         )
         ds["pred"] += da["ols_mean"]
 
         # Add back the temporal trend value
-        ds["pred"] += self.mf.fields[0].ds.attrs["temporal_trend"]
+        ds["pred"] += self.mf.fields[self.i].ds.attrs["temporal_trend"]
 
         return ds
 

@@ -188,6 +188,9 @@ class FullBivariateMatern:
         return cov
 
     def cross_covariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        if i > j:
+            # swap indices (cross-covariance is symmetric)
+            i, j = j, i
         return (
             self.params.rho.values[i, j]
             * np.nanprod(self.params.sigma.values)
@@ -201,6 +204,9 @@ class FullBivariateMatern:
         )
 
     def cross_semivariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        if i > j:
+            # swap indices (cross-covariance is symmetric)
+            i, j = j, i
         sill = 0.5 * np.nansum(
             self.params.sigma.values ** 2 + self.params.nugget.values
         )

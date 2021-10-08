@@ -195,11 +195,17 @@ def get_data(field):
     return da.T
 
 
-def plot_fields(mf, coord_avg=False, filename=None):
+def get_month_from_string(timestamp: str) -> str:
+    m = np.datetime64(timestamp)
+    return np.datetime_as_string(m, unit="M")
+
+
+def plot_fields(mf, title=None, coord_avg=False, fontsize=12, filename=None):
     PROJ = ccrs.PlateCarree()
     CMAP = cm.roma.reversed()
     extents = [-130, -60, 18, 60]
-    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
+    if title is None:
+        title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
     if coord_avg:
         fig = plt.figure(figsize=(20, 12))
@@ -207,12 +213,12 @@ def plot_fields(mf, coord_avg=False, filename=None):
         ax1 = fig.add_subplot(gs[0:50, 0:49], projection=PROJ)
         ax2 = fig.add_subplot(gs[0:50, 51:100], projection=PROJ)
         axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
-        fig.suptitle(title, size=12, y=0.95)
+        fig.suptitle(title, size=fontsize, y=0.95)
     else:
         fig, (ax1, ax2) = plt.subplots(
-            1, 2, figsize=(14, 4), subplot_kw={"projection": PROJ}
+            1, 2, figsize=(16, 4), subplot_kw={"projection": PROJ}
         )
-        fig.suptitle(title, size=12)
+        fig.suptitle(title, size=fontsize)
 
     xr.plot.imshow(
         darray=get_data(mf.fields[0]),
@@ -221,7 +227,7 @@ def plot_fields(mf, coord_avg=False, filename=None):
         cmap=CMAP,
         vmin=-3,
         center=0,
-        cbar_kwargs={"label": "Process residuals"},
+        cbar_kwargs={"label": "Standardized residuals"},
     )
     xr.plot.imshow(
         darray=get_data(mf.fields[1]),
@@ -230,14 +236,18 @@ def plot_fields(mf, coord_avg=False, filename=None):
         cmap=CMAP,
         vmin=-3,
         center=0,
-        cbar_kwargs={"label": "Process residuals"},
+        cbar_kwargs={"label": "Standardized residuals"},
     )
 
     for ax in [ax1, ax2]:
         prep_axes(ax, extents)
 
-    ax1.set_title(f"XCO$_2$: {mf.fields[0].timestamp}", fontsize=12)
-    ax2.set_title(f"SIF: {mf.fields[1].timestamp}", fontsize=12)
+    ax1.set_title(
+        f"XCO$_2$: {get_month_from_string(mf.fields[0].timestamp)}", fontsize=fontsize
+    )
+    ax2.set_title(
+        f"SIF: {get_month_from_string(mf.fields[1].timestamp)}", fontsize=fontsize
+    )
 
     if coord_avg:
         resid_coord_avg(mf, axes)
@@ -286,6 +296,7 @@ def plot_model_group(ids, group, ax):
 def plot_variograms(
     fit_result: FittedVariogram,
     data_names: list[str],
+    title: str = None,
     fontsize: int = 12,
     filename: str = None,
 ):
@@ -316,14 +327,21 @@ def plot_variograms(
     )
     ax[2].set_title(f"{kind}: {data_names[1]}", fontsize=fontsize)
 
-    fig.suptitle(
-        f"{kind}s and cross-{kind.lower()} for {data_names[0]} and"
-        f" {data_names[1]} residuals\n {fit_result.timestamp}, 4x5-degree North"
-        f" America, {fit_result.config.n_bins} bins, CompWLS:"
-        f" {np.int(fit_result.cost)}",
-        fontsize=fontsize,
-        y=1.1,
-    )
+    if title is None:
+        fig.suptitle(
+            f"{kind}s and cross-{kind.lower()} for {data_names[0]} and"
+            f" {data_names[1]} residuals\n {fit_result.timestamp}, 4x5-degree North"
+            f" America, {fit_result.config.n_bins} bins, CompWLS:"
+            f" {np.int(fit_result.cost)}",
+            fontsize=fontsize,
+            # y=1.1,
+        )
+    else:
+        fig.suptitle(
+            title,
+            fontsize=fontsize,
+            y=1.1,
+        )
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=100)
@@ -351,10 +369,40 @@ def plot_da(
         vmin=vmin,
         vmax=vmax,
         robust=robust,
-        levels=80,
         cbar_kwargs={"label": label},
     )
     prep_axes(ax, extents)
+    ax.set_title(title, fontsize=fontsize)
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
+def plot_df(
+    df,
+    vmin=None,
+    vmax=None,
+    cmap=cm.bamako.reversed(),
+    title=None,
+    label=None,
+    fontsize=12,
+    filename=None,
+):
+    PROJ = ccrs.PlateCarree()
+    extents = [-130, -60, 18, 60]
+    fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
+    prep_axes(ax, extents)
+    plt.scatter(
+        x=df.lon,
+        y=df.lat,
+        c=df.sif,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=cmap,
+        s=2,
+        alpha=0.8,
+        transform=ccrs.PlateCarree(),
+    )
+    plt.colorbar(label=label)
     ax.set_title(title, fontsize=fontsize)
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=180)

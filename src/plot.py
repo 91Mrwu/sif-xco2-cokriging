@@ -24,6 +24,7 @@ ALPHA = 0.6
 
 
 def prep_axes(ax, extents):
+    ax.add_feature(cfeature.OCEAN)
     ax.coastlines()
     ax.set_extent(extents)
     gl = ax.gridlines(
@@ -44,55 +45,6 @@ def prep_axes(ax, extents):
     gl.ylocator = mticker.FixedLocator([30, 50])
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
-    # gl.xlabel_style = {"size": 14}
-    # gl.ylabel_style = {"size": 14}
-
-
-# def set_gridlines_new(ax):
-#     ax.set_xticks([-120.0, -100.0, -80.0, -60.0], crs=ccrs.PlateCarree())
-#     ax.set_xticklabels([-120.0, -100.0, -80.0, -60.0])
-#     ax.set_yticks([30.0, 50.0], crs=ccrs.PlateCarree())
-#     ax.set_yticklabels([30.0, 50.0])
-
-#     lon_formatter = cticker.LongitudeFormatter()
-#     lat_formatter = cticker.LatitudeFormatter()
-#     ax.xaxis.set_major_formatter(lon_formatter)
-#     ax.yaxis.set_major_formatter(lat_formatter)
-#     ax.grid(linewidth=0.8, color="black", alpha=0.5, linestyle="--")
-
-
-def plot_da(
-    da,
-    title="",
-    ax=None,
-    cbar_ax=None,
-    cmap="jet",
-    cbar_kwargs=None,
-    vmin=None,
-    vmax=None,
-    robust=True,
-    add_colorbar=True,
-):
-    """
-    Wrapper to create an image / raster plot of a data array in a given axis.
-    """
-    ax.set_global()
-    xr.plot.imshow(
-        darray=da.T,
-        transform=ccrs.PlateCarree(),
-        ax=ax,
-        cbar_ax=cbar_ax,
-        vmin=vmin,
-        vmax=vmax,
-        cmap=cmap,
-        cbar_kwargs=cbar_kwargs,
-        robust=robust,
-        add_colorbar=add_colorbar,
-    )
-    ax.add_feature(cfeature.OCEAN, zorder=9)
-    ax.coastlines(zorder=10)
-    ax.set_title(title, size=14)
-    return (ax, cbar_ax)
 
 
 def qq_plots(mf):
@@ -139,10 +91,7 @@ def raw_climatology(df, title, filename=None):
     ax.set_ylabel("XCO$_2$ [ppm]", size=12)
     ax.set_xlabel("Time", size=12)
     ax.set_title(title, size=12)
-    # plt.setp(ax.spines.values(), color="white")
-    # plt.setp(ax_r1.spines.values(), color="white")
     plt.tight_layout()
-
     if filename:
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
@@ -247,20 +196,12 @@ def get_data(field):
 
 
 def plot_fields(mf, coord_avg=False, filename=None):
-    # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
-    # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
     PROJ = ccrs.PlateCarree()
     CMAP = cm.roma.reversed()
     extents = [-130, -60, 18, 60]
     title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
 
     if coord_avg:
-        # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
-        # gs = f_axs[0, 0].get_gridspec()
-        # for ax in f_axs[0, 0:]:
-        #     ax.remove()
-        # ax1 = fig.add_subplot(gs[0, 0], projection=PROJ)
-        # ax2 = fig.add_subplot(gs[0, 1], projection=PROJ)
         fig = plt.figure(figsize=(20, 12))
         gs = fig.add_gridspec(80, 100)
         ax1 = fig.add_subplot(gs[0:50, 0:49], projection=PROJ)
@@ -268,10 +209,6 @@ def plot_fields(mf, coord_avg=False, filename=None):
         axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
         fig.suptitle(title, size=12, y=0.95)
     else:
-        # fig = plt.figure(figsize=(20, 5))
-        # gs = fig.add_gridspec(100, 100)
-        # ax1 = fig.add_subplot(gs[:, 0:52], projection=PROJ)
-        # ax2 = fig.add_subplot(gs[:, 48:100], projection=PROJ)
         fig, (ax1, ax2) = plt.subplots(
             1, 2, figsize=(14, 4), subplot_kw={"projection": PROJ}
         )
@@ -297,14 +234,12 @@ def plot_fields(mf, coord_avg=False, filename=None):
     )
 
     for ax in [ax1, ax2]:
-        # set_gridlines_new(ax)
         prep_axes(ax, extents)
 
     ax1.set_title(f"XCO$_2$: {mf.fields[0].timestamp}", fontsize=12)
     ax2.set_title(f"SIF: {mf.fields[1].timestamp}", fontsize=12)
 
     if coord_avg:
-        # resid_coord_avg(mf, f_axs[1, 0:])
         resid_coord_avg(mf, axes)
 
     if filename:
@@ -392,3 +327,34 @@ def plot_variograms(
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=100)
+
+
+def plot_da(
+    da,
+    vmin=None,
+    vmax=None,
+    robust=False,
+    cmap=cm.bamako.reversed(),
+    title=None,
+    label=None,
+    fontsize=12,
+    filename=None,
+):
+    PROJ = ccrs.PlateCarree()
+    extents = [-130, -60, 18, 60]
+    fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
+    xr.plot.imshow(
+        darray=da.T,
+        transform=ccrs.PlateCarree(),
+        ax=ax,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        robust=robust,
+        levels=80,
+        cbar_kwargs={"label": label},
+    )
+    prep_axes(ax, extents)
+    ax.set_title(title, fontsize=fontsize)
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)

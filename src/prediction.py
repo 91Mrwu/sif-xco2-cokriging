@@ -20,7 +20,7 @@ Steps:
 
 TODO: 
  [x] allow for prediction of process [i] rather than process 0 only
- - prediction results plotting function
+ [x] prediction results plotting function
 """
 
 import warnings
@@ -32,7 +32,7 @@ from xarray import Dataset, DataArray
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 
 from fields import MultiField
-from model import FullBivariateMatern
+from model import MultivariateMatern
 from spatial_tools import distance_matrix
 from stat_tools import standardize
 from data_utils import GridConfig, land_grid
@@ -46,7 +46,7 @@ class Predictor:
 
     def __init__(
         self,
-        mod: FullBivariateMatern,
+        mod: MultivariateMatern,
         mf: MultiField,
         covariates: DataArray = None,
         dist_units: str = "km",
@@ -65,7 +65,12 @@ class Predictor:
         self.Sigma = self._cov_blocks()
 
     def __call__(
-        self, i: int, pcoords: np.ndarray, max_dist: float = 1e3, partitions: int = None
+        self,
+        i: int,
+        pcoords: np.ndarray,
+        max_dist: float = 1e3,
+        partitions: int = None,
+        postprocess: bool = True,
     ) -> pd.DataFrame:
         """Apply the multivariate local prediction at each location in the specified prediction coordinates.
 
@@ -100,7 +105,16 @@ class Predictor:
             # process full data as a single chunk
             df_pred = self._predict_chunk(df, c0, max_dist)
 
-        return self._postprocess_predictions(df_pred)
+        if postprocess:
+            return self._postprocess_predictions(df_pred)
+        else:
+            return (
+                df_pred.set_index(["lon", "lat"])
+                .to_xarray()
+                .assign_coords(
+                    coords={"time": np.datetime64(self.mf.fields[self.i].timestamp)}
+                )
+            )
 
     def _cov_blocks(self) -> dict:
         """Precomputes each block in the block-covariance matrix, with each block describing the dependence within a process or between processes."""
@@ -123,7 +137,7 @@ class Predictor:
     def _pred_cov(self, dists: list) -> list:
         """Computes the covariance and cross-covariance vectors for a set of local distances about a prediction location."""
         cov_vecs = list()
-        for j in range(0, self.n_procs):
+        for j in range(self.n_procs):
             if self.i == j:
                 cov_vecs.append(
                     self.mod.covariance(self.i, dists[self.i], use_nugget=False)

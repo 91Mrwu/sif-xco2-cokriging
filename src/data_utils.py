@@ -1,11 +1,21 @@
 # Utilities for reading, writing, and formatting data
 import warnings
+from collections import Iterable
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 from xarray import Dataset, open_dataset
 from regionmask.defined_regions import natural_earth
+
+
+## Misc
+def get_iterable(x):
+    if isinstance(x, Iterable):
+        return x
+    else:
+        return (x,)
+
 
 ## Reading
 def prep_sif(ds: Dataset) -> Dataset:

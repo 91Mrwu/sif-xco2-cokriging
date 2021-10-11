@@ -124,7 +124,10 @@ class MaternParams:
         self.nu = CrossParam("nu", 1.5, (0.2, 3.5), n_procs=n_procs)
         self.len_scale = CrossParam("len_scale", 5e2, (1e2, 2e3), n_procs=n_procs)
         self.nugget = MarginalParam("nugget", 0.0, (0.0, 0.2), n_procs=n_procs)
-        self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), n_procs=n_procs)
+        if n_procs == 1:
+            self.rho = RhoParam("rho", np.nan, (-1.0, 1.0), n_procs=n_procs)
+        else:
+            self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), n_procs=n_procs)
         self._params = [self.sigma, self.nu, self.len_scale, self.nugget, self.rho]
         self.n_params = 0
         for p in self._params:
@@ -165,16 +168,17 @@ class MaternParams:
 
 
 # TODO: add method to check parameter validity (paper specs and perhaps Cauchy-Schwarz)
-class FullBivariateMatern:
-    """Full bivariate Matern covariance model (Gneiting et al., 2010).
+class MultivariateMatern:
+    """Multivariate Matern covariance model (Gneiting et al., 2010).
 
     Notes:
     - Parameterization follows Rassmussen and Williams (2006; see MaternParams)
     """
 
-    def __init__(self) -> None:
-        self.n_procs = 2
-        self.params = MaternParams(n_procs=2)
+    def __init__(self, n_procs: int = 2) -> None:
+        self.n_procs = n_procs
+        self.params = MaternParams(n_procs=n_procs)
+        self.fit_result = None
 
     def correlation(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
         nu = self.params.nu.values[i, j]
@@ -302,7 +306,7 @@ class FittedVariogram:
     """Model parameters and theoretical variogram for the correponding emprical variogram."""
 
     def __init__(
-        self, model: FullBivariateMatern, estimate: EmpiricalVariogram, cost: float
+        self, model: MultivariateMatern, estimate: EmpiricalVariogram, cost: float
     ) -> None:
         self.config = estimate.config
         self.timestamp = estimate.timestamp

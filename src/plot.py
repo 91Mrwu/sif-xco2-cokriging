@@ -80,9 +80,11 @@ def plot_da(
 
 def plot_df(
     df,
+    data_name,
     vmin=None,
     vmax=None,
     cmap=cm.bamako.reversed(),
+    s=2,
     title=None,
     label=None,
     fontsize=12,
@@ -95,14 +97,15 @@ def plot_df(
     plt.scatter(
         x=df.lon,
         y=df.lat,
-        c=df.sif,
+        c=df[data_name],
         vmin=vmin,
         vmax=vmax,
         cmap=cmap,
-        s=2,
+        s=s,
         alpha=0.8,
         transform=ccrs.PlateCarree(),
     )
+    cmap.set_bad(color="red")
     plt.colorbar(label=label)
     ax.set_title(title, fontsize=fontsize)
     if filename:

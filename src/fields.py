@@ -60,10 +60,8 @@ class Field:
         self.data_name, self.var_name = _get_field_names(ds)
         self.ds = _preprocess_ds(ds, timestamp, covariates)
         self.ds_main = get_main_coords(self.ds).sel(time=timestamp)
-        df = self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
-        df_main = (
-            self.ds_main.to_dataframe().reset_index().dropna(subset=[self.data_name])
-        )
+        df = self.to_dataframe()
+        df_main = self.to_dataframe(main=True)
         self.coords = df[["lat", "lon"]].values
         self.coords_main = df_main[["lat", "lon"]].values
         self.values = df[self.data_name].values
@@ -75,6 +73,17 @@ class Field:
         self.variance_estimate = df[self.var_name].values
         self.covariates = df[covariates]
         self.size = len(self.values)
+
+    def to_dataframe(self, main: bool = False):
+        """Converts the field to a data frame."""
+        if main:
+            return (
+                self.ds_main.to_dataframe()
+                .reset_index()
+                .dropna(subset=[self.data_name])
+            )
+        else:
+            return self.ds.to_dataframe().reset_index().dropna(subset=[self.data_name])
 
     def to_xarray(self) -> Dataset:
         """Converts the field to an xarray dataset."""

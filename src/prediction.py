@@ -4,7 +4,7 @@ Steps:
 [x] setup prediction locations with resultion 0.5x0.5-degree (land only)
 [x] precompute the grand-covariance matrix blocks for all data locations
 [x] for a given prediction location, find the data indices within a max_dist for each dataset
-    3.1 if there are more than N points in that window, then subsample [rather than subsample, shrink the window]
+    [ ] if there are more than N points in that window, then subsample [rather than subsample, shrink the window]
 [x] collect the block covariance matrix and the stacked data vector at the correct indices
 [x] compute covariance arrays between prediction locations and data locations
 [x] verify local model using cholesky decomp (check that joint cov mat is not singular)
@@ -84,7 +84,7 @@ class Predictor:
             dataframe with predicted values and standard deviations at each location
         """
         self.i = i
-        c0 = self.mod.covariance(self.i, 0, use_nugget=False)[0]
+        c0 = self.mod.covariance(self.i, 0, use_nugget=True)[0]
         df = pd.DataFrame(pcoords)
         df.columns = ["lat", "lon"]
 
@@ -140,7 +140,7 @@ class Predictor:
         for j in range(self.n_procs):
             if self.i == j:
                 cov_vecs.append(
-                    self.mod.covariance(self.i, dists[self.i], use_nugget=False)
+                    self.mod.covariance(self.i, dists[self.i], use_nugget=True)
                 )
             else:
                 cov_vecs.append(self.mod.cross_covariance(self.i, j, dists[j]))
@@ -208,7 +208,8 @@ class Predictor:
                     np.hstack([c0, local_pred_cov]),
                     np.column_stack([local_pred_cov, local_cov]),
                 ]
-            )
+            ),
+            overwrite_a=True,
         )
 
     @staticmethod
@@ -220,30 +221,15 @@ class Predictor:
     ) -> tuple[float, float]:
         """Local prediction and uncertainty calculations."""
         # NOTE: should be safe to use overwrites with no finite check since this will be done in model verification
-        pred = np.matmul(
-            local_pred_cov,
-            cho_solve(
-                cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
-                local_data,
-                overwrite_b=True,
-                check_finite=False,
-            ),
+        cov_weights = cho_solve(
+            cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
+            local_pred_cov.copy(),
+            overwrite_b=True,
+            check_finite=False,
         )
-        pred_std = np.sqrt(
-            c0
-            - np.matmul(
-                local_pred_cov,
-                cho_solve(
-                    cho_factor(
-                        local_cov, lower=True, overwrite_a=True, check_finite=False
-                    ),
-                    local_pred_cov,
-                    overwrite_b=True,
-                    check_finite=False,
-                ),
-            )
-        )
-        return pred, pred_std
+        pred = np.matmul(cov_weights, local_data)
+        pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
+        return pred, np.nanmax([pred_std, 0.0])
 
     def _local_prediction(
         self, s0: np.ndarray, c0: float, max_dist: float

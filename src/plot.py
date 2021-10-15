@@ -13,7 +13,8 @@ from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 # import cartopy.mpl.ticker as cticker
 from cmcrameri import cm
 
-from data_utils import set_main_coords, get_main_coords
+from data_utils import set_main_coords, get_main_coords, get_iterable
+from fields import MultiField
 from model import FittedVariogram
 
 # Global settings
@@ -24,6 +25,7 @@ ALPHA = 0.6
 
 
 def prep_axes(ax, extents):
+    ax.add_feature(cfeature.OCEAN)
     ax.coastlines()
     ax.set_extent(extents)
     gl = ax.gridlines(
@@ -44,55 +46,70 @@ def prep_axes(ax, extents):
     gl.ylocator = mticker.FixedLocator([30, 50])
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
-    # gl.xlabel_style = {"size": 14}
-    # gl.ylabel_style = {"size": 14}
-
-
-# def set_gridlines_new(ax):
-#     ax.set_xticks([-120.0, -100.0, -80.0, -60.0], crs=ccrs.PlateCarree())
-#     ax.set_xticklabels([-120.0, -100.0, -80.0, -60.0])
-#     ax.set_yticks([30.0, 50.0], crs=ccrs.PlateCarree())
-#     ax.set_yticklabels([30.0, 50.0])
-
-#     lon_formatter = cticker.LongitudeFormatter()
-#     lat_formatter = cticker.LatitudeFormatter()
-#     ax.xaxis.set_major_formatter(lon_formatter)
-#     ax.yaxis.set_major_formatter(lat_formatter)
-#     ax.grid(linewidth=0.8, color="black", alpha=0.5, linestyle="--")
 
 
 def plot_da(
     da,
-    title="",
-    ax=None,
-    cbar_ax=None,
-    cmap="jet",
-    cbar_kwargs=None,
     vmin=None,
     vmax=None,
-    robust=True,
-    add_colorbar=True,
+    robust=False,
+    cmap=cm.bamako_r,
+    title=None,
+    label=None,
+    fontsize=12,
+    filename=None,
 ):
-    """
-    Wrapper to create an image / raster plot of a data array in a given axis.
-    """
-    ax.set_global()
+    PROJ = ccrs.PlateCarree()
+    extents = [-130, -60, 18, 60]
+    fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
     xr.plot.imshow(
         darray=da.T,
         transform=ccrs.PlateCarree(),
         ax=ax,
-        cbar_ax=cbar_ax,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        robust=robust,
+        cbar_kwargs={"label": label},
+    )
+    prep_axes(ax, extents)
+    ax.set_title(title, fontsize=fontsize)
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
+def plot_df(
+    df,
+    data_name,
+    vmin=None,
+    vmax=None,
+    cmap=cm.bamako.reversed(),
+    s=2,
+    title=None,
+    label=None,
+    fontsize=12,
+    filename=None,
+):
+    PROJ = ccrs.PlateCarree()
+    extents = [-130, -60, 18, 60]
+    fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
+    prep_axes(ax, extents)
+    plt.scatter(
+        x=df.lon,
+        y=df.lat,
+        c=df[data_name],
         vmin=vmin,
         vmax=vmax,
         cmap=cmap,
-        cbar_kwargs=cbar_kwargs,
-        robust=robust,
-        add_colorbar=add_colorbar,
+        s=s,
+        alpha=0.8,
+        transform=ccrs.PlateCarree(),
     )
-    ax.add_feature(cfeature.OCEAN, zorder=9)
-    ax.coastlines(zorder=10)
-    ax.set_title(title, size=14)
-    return (ax, cbar_ax)
+    cmap.set_bad(color="red")
+    plt.colorbar(label=label)
+    ax.set_title(title, fontsize=fontsize)
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
 def qq_plots(mf):
@@ -139,10 +156,7 @@ def raw_climatology(df, title, filename=None):
     ax.set_ylabel("XCO$_2$ [ppm]", size=12)
     ax.set_xlabel("Time", size=12)
     ax.set_title(title, size=12)
-    # plt.setp(ax.spines.values(), color="white")
-    # plt.setp(ax_r1.spines.values(), color="white")
     plt.tight_layout()
-
     if filename:
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
@@ -241,83 +255,55 @@ def resid_coord_avg(mf, axes=None, filename=None):
         plt.savefig(f"../plots/{filename}.png", dpi=200)
 
 
-def get_data(field, lon_centers, lat_centers):
-    da = (
-        get_main_coords(field.ds, lon_centers, lat_centers)
-        .sel(time=field.timestamp)[field.data_name]
-        .rename({"lon": "Longitude", "lat": "Latitude"})
-    )
+def get_data(field):
+    da = field.ds_main[field.data_name].rename({"lon": "Longitude", "lat": "Latitude"})
     return da.T
 
 
-def plot_fields(mf, coord_avg=False, filename=None):
-    # title = "XCO$_2$ and SIF: 4x5-degree monthly averages\n Temporal trend and spatial mean surface removed; residuals scaled by spatial standard deviation"
-    # title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals\n Temporal trend and spatial mean surface removed; residuals scaled by spatial median absolute deviation"
+def get_month_from_string(timestamp: str) -> str:
+    m = np.datetime64(timestamp)
+    return np.datetime_as_string(m, unit="M")
+
+
+def plot_fields(
+    mf: MultiField,
+    data_names: list[str],
+    title: str = None,
+    fontsize: int = 12,
+    filename: str = None,
+):
     PROJ = ccrs.PlateCarree()
-    CMAP = cm.roma.reversed()
-    title = "XCO$_2$ and SIF: 4x5-degree monthly average residuals"
-
+    CMAP = cm.roma_r
     extents = [-130, -60, 18, 60]
-    lon_centers, lat_centers = set_main_coords()
+    if title is None:
+        title = f"{','.join(data_names)}: 4x5-degree monthly average residuals"
 
-    if coord_avg:
-        # fig, f_axs = plt.subplots(2, 2, figsize=(20, 14), sharey=True)
-        # gs = f_axs[0, 0].get_gridspec()
-        # for ax in f_axs[0, 0:]:
-        #     ax.remove()
-        # ax1 = fig.add_subplot(gs[0, 0], projection=PROJ)
-        # ax2 = fig.add_subplot(gs[0, 1], projection=PROJ)
-        fig = plt.figure(figsize=(20, 12))
-        gs = fig.add_gridspec(80, 100)
-        ax1 = fig.add_subplot(gs[0:50, 0:49], projection=PROJ)
-        ax2 = fig.add_subplot(gs[0:50, 51:100], projection=PROJ)
-        axes = [fig.add_subplot(gs[55:80, 0:39]), fig.add_subplot(gs[55:80, 51:90])]
-        fig.suptitle(title, size=12, y=0.95)
-    else:
-        # fig = plt.figure(figsize=(20, 5))
-        # gs = fig.add_gridspec(100, 100)
-        # ax1 = fig.add_subplot(gs[:, 0:52], projection=PROJ)
-        # ax2 = fig.add_subplot(gs[:, 48:100], projection=PROJ)
-        fig, (ax1, ax2) = plt.subplots(
-            1, 2, figsize=(14, 4), subplot_kw={"projection": PROJ}
-        )
-        fig.suptitle(title, size=12)
-
-    xr.plot.imshow(
-        darray=get_data(mf.fields[0], lon_centers, lat_centers),
-        transform=ccrs.PlateCarree(),
-        ax=ax1,
-        cmap=CMAP,
-        vmin=-3,
-        center=0,
-        cbar_kwargs={"label": "Process residuals"},
+    fig, axes = plt.subplots(
+        1, mf.n_procs, figsize=(8 * mf.n_procs, 4), subplot_kw={"projection": PROJ}
     )
-    xr.plot.imshow(
-        darray=get_data(mf.fields[1], lon_centers, lat_centers),
-        transform=ccrs.PlateCarree(),
-        ax=ax2,
-        cmap=CMAP,
-        vmin=-3,
-        center=0,
-        cbar_kwargs={"label": "Process residuals"},
-    )
+    fig.suptitle(title, size=fontsize)
 
-    for ax in [ax1, ax2]:
-        # set_gridlines_new(ax)
+    for i, ax in enumerate(get_iterable(axes)):
         prep_axes(ax, extents)
-
-    ax1.set_title(f"XCO$_2$: {mf.fields[0].timestamp}", fontsize=12)
-    ax2.set_title(f"SIF: {mf.fields[1].timestamp}", fontsize=12)
-
-    if coord_avg:
-        # resid_coord_avg(mf, f_axs[1, 0:])
-        resid_coord_avg(mf, axes)
+        xr.plot.imshow(
+            darray=get_data(mf.fields[i]),
+            transform=ccrs.PlateCarree(),
+            ax=ax,
+            cmap=CMAP,
+            vmin=-3,
+            center=0,
+            cbar_kwargs={"label": "Standardized residuals"},
+        )
+        ax.set_title(
+            f"{data_names[i]}: {get_month_from_string(mf.fields[i].timestamp)}",
+            fontsize=fontsize,
+        )
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
-def plot_empirical_group(ids, group, fit_result, ax):
+def plot_empirical_group(ids, group, fit_result, data_names, ax):
     idx = np.sum(ids)
     group.plot(
         x="bin_center",
@@ -328,14 +314,25 @@ def plot_empirical_group(ids, group, fit_result, ax):
         ax=ax[idx],
         label=f"Empirical {fit_result.config.kind.lower()}",
     )
+
     if idx == 1:
         ax[idx].set_ylabel(
             f"Cross-{fit_result.scale_lab.lower()}", fontsize=fit_result.fontsize
         )
+        ax[idx].set_title(
+            f"Cross-{fit_result.config.kind.lower()}: {data_names[ids[0]]} vs"
+            f" {data_names[ids[1]]} at"
+            f" {np.abs(fit_result.timedeltas[idx])} month(s) lag",
+            fontsize=fit_result.fontsize,
+        )
     else:
         ax[idx].set_ylabel(fit_result.scale_lab, fontsize=fit_result.fontsize)
+        ax[idx].set_title(
+            f"{fit_result.config.kind}: {data_names[ids[1]]}",
+            fontsize=fit_result.fontsize,
+        )
         if fit_result.scale_lab.lower() != "covariance":
-            ax[idx].set_ylim(bottom=0)
+            ax[idx].set_ylim(bottom=0.0)
     ax[idx].set_xlabel(
         f"Separation distance ({fit_result.config.dist_units})",
         fontsize=fit_result.fontsize,
@@ -354,47 +351,54 @@ def plot_model_group(ids, group, ax):
     )
 
 
+def triangular_number(n):
+    return n * (n + 1) // 2
+
+
 def plot_variograms(
     fit_result: FittedVariogram,
     data_names: list[str],
+    title: str = None,
     fontsize: int = 12,
     filename: str = None,
 ):
-    # TODO: add bar chart (or number) indicating bin count
+    # TODO: add bar chart (or number) indicating bin count (see scikit-gstat for example)
     # TODO: provide parameters in table
+    n_procs = fit_result.config.n_procs
+    n_plots = triangular_number(n_procs)
     fit_result.fontsize = fontsize
     if fit_result.config.kind == "Covariogram":
         fit_result.scale_lab = "Covariance"
     else:
         fit_result.scale_lab = "Semivariance"
 
-    fig, ax = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
+    fig, ax = plt.subplots(
+        1, n_plots, figsize=(6 * n_plots, 5), constrained_layout=True
+    )
 
     groups1 = fit_result.df_empirical.groupby(level=[0, 1])
     for ids, df_group in groups1:
-        plot_empirical_group(ids, df_group, fit_result, ax)
+        plot_empirical_group(ids, df_group, fit_result, data_names, get_iterable(ax))
 
     groups2 = fit_result.df_theoretical.groupby(level=[0, 1])
     for ids, df_group in groups2:
-        plot_model_group(ids, df_group, ax)
+        plot_model_group(ids, df_group, get_iterable(ax))
 
-    kind = fit_result.config.kind
-    ax[0].set_title(f"{kind}: {data_names[0]}", fontsize=fontsize)
-    ax[1].set_title(
-        f"Cross-{kind.lower()}: {data_names[0]} vs {data_names[1]} at"
-        f" {np.abs(fit_result.timedeltas[1])} month(s) lag",
-        fontsize=fontsize,
-    )
-    ax[2].set_title(f"{kind}: {data_names[1]}", fontsize=fontsize)
-
-    fig.suptitle(
-        f"{kind}s and cross-{kind.lower()} for {data_names[0]} and"
-        f" {data_names[1]} residuals\n {fit_result.timestamp}, 4x5-degree North"
-        f" America, {fit_result.config.n_bins} bins, CompWLS:"
-        f" {np.int(fit_result.cost)}",
-        fontsize=fontsize,
-        y=1.1,
-    )
+    if title is None:
+        fig.suptitle(
+            f"{fit_result.config.kind}s and cross-{fit_result.config.kind.lower()} for"
+            f" {' and '.join(data_names)} residuals\n {fit_result.timestamp},"
+            f" 4x5-degree North America, {fit_result.config.n_bins} bins, CompWLS:"
+            f" {np.int(fit_result.cost)}",
+            fontsize=fontsize,
+            y=1.1,
+        )
+    else:
+        fig.suptitle(
+            title,
+            fontsize=fontsize,
+            y=1.1,
+        )
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=100)

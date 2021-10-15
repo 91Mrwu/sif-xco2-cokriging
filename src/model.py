@@ -1,18 +1,16 @@
 import warnings
 
-# TODO: implement numba for speed
-from numba import njit
-
+# TODO: implement numba in classes for speed
 # from numba.experimental import jitclass
-# from numba import int32, float32
-# import numba_scipy
 
+from numba import njit, vectorize, guvectorize, float64
 import numpy as np
 import pandas as pd
 import scipy.special as sps
+import numba_scipy
 from scipy.optimize import minimize
 
-from spatial_tools import pre_post_diag, get_group_ids
+from spatial_tools import get_group_ids
 from fields import EmpiricalVariogram
 
 
@@ -126,7 +124,10 @@ class MaternParams:
         self.nu = CrossParam("nu", 1.5, (0.2, 3.5), n_procs=n_procs)
         self.len_scale = CrossParam("len_scale", 5e2, (1e2, 2e3), n_procs=n_procs)
         self.nugget = MarginalParam("nugget", 0.0, (0.0, 0.2), n_procs=n_procs)
-        self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), n_procs=n_procs)
+        if n_procs == 1:
+            self.rho = RhoParam("rho", np.nan, (-1.0, 1.0), n_procs=n_procs)
+        else:
+            self.rho = RhoParam("rho", 0.0, (-1.0, 1.0), n_procs=n_procs)
         self._params = [self.sigma, self.nu, self.len_scale, self.nugget, self.rho]
         self.n_params = 0
         for p in self._params:
@@ -166,56 +167,34 @@ class MaternParams:
         return self
 
 
-# TODO: add method to check parameter validity (overall pos def and paper specs)
-class FullBivariateMatern:
-    """Full bivariate Matern covariance model (Gneiting et al., 2010).
+# TODO: add method to check parameter validity (paper specs and perhaps Cauchy-Schwarz)
+class MultivariateMatern:
+    """Multivariate Matern covariance model (Gneiting et al., 2010).
 
     Notes:
     - Parameterization follows Rassmussen and Williams (2006; see MaternParams)
     """
 
-    def __init__(self) -> None:
-        self.n_procs = 2
-        self.params = MaternParams(n_procs=2)
+    def __init__(self, n_procs: int = 2) -> None:
+        self.n_procs = n_procs
+        self.params = MaternParams(n_procs=n_procs)
+        self.fit_result = None
 
     def correlation(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
-        r"""Matern correlation function.
-
-        Parameters:
-            i, j: process indices
-            h: array of spatial separation distances (lags), e.g., distance matrix
-
-        .. math::
-            \rho(h) =
-            \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
-            \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
-            \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
-        """
         nu = self.params.nu.values[i, j]
         len_scale = self.params.len_scale.values[i, j]
+        return _matern_correlation(nu, len_scale, h)
 
-        # TODO: add check so that negative distances and correlation values yeild warning.
-        h = np.array(np.abs(h), dtype=np.double)
-        # calculate by log-transformation to prevent numerical errors
-        h_positive_scaled = h[h > 0.0] / len_scale
-        corr = np.ones_like(h)
-        corr[h > 0.0] = np.exp(
-            (1.0 - nu) * np.log(2)
-            - sps.gammaln(nu)
-            + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
-        ) * sps.kv(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
-        # if nu >> 1 we get errors for the farfield, there 0 is approached
-        corr[np.logical_not(np.isfinite(corr))] = 0.0
-        # Matern correlation is positive
-        corr = np.maximum(corr, 0.0)
-        return corr
-
-    def covariance(self, i: int, h: np.ndarray) -> np.ndarray:
+    def covariance(self, i: int, h: np.ndarray, use_nugget: bool = True) -> np.ndarray:
         cov = self.params.sigma.values[i, i] ** 2 * self.correlation(i, i, h)
-        cov[h == 0] += self.params.nugget.values[i, i]
+        if use_nugget:
+            cov[h == 0] += self.params.nugget.values[i, i]
         return cov
 
     def cross_covariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        if i > j:
+            # swap indices (cross-covariance is symmetric)
+            i, j = j, i
         return (
             self.params.rho.values[i, j]
             * np.nanprod(self.params.sigma.values)
@@ -229,6 +208,9 @@ class FullBivariateMatern:
         )
 
     def cross_semivariance(self, i: int, j: int, h: np.ndarray) -> np.ndarray:
+        if i > j:
+            # swap indices (cross-covariance is symmetric)
+            i, j = j, i
         sill = 0.5 * np.nansum(
             self.params.sigma.values ** 2 + self.params.nugget.values
         )
@@ -258,8 +240,6 @@ class FullBivariateMatern:
             if i <= j
         ]
         return pd.concat(variograms)
-
-    # Model fitting
 
     @staticmethod
     def _weighted_least_squares(
@@ -317,68 +297,16 @@ class FullBivariateMatern:
         )
         if optim_result.success == False:
             warnings.warn("ERROR: optimization did not converge.")
-        # TODO: check model validity
         self.params.set_values(optim_result.x)
         self.fit_result = FittedVariogram(self, estimate, optim_result.fun)
         return self
-
-    # Prediction
-
-    def cross_covariance_pred(self, dist_blocks):
-        """Computes the cross-covariance vectors for prediction distances."""
-        c_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
-            dist_blocks["block_11"]
-        )
-        c_12 = (
-            self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_12"])
-        )
-        cov_vecs = np.hstack((c_11, c_12))
-        # normalize rows of cov_vecs with joint_std_inverse via broadcasting
-        assert (
-            cov_vecs.shape[1] == self.fields.joint_std_inverse.shape[0]
-        ), "mismatched dimensions"
-        return cov_vecs * self.fields.joint_std_inverse
-
-    def covariance_matrix_pred(self, dist_blocks):
-        """Constructs the bivariate Matern covariance matrix.
-
-        NOTE: ask about when to add nugget and error variance along diag
-        """
-        C_11 = self.kernel_1.sigma ** 2 * self.kernel_1.correlation(
-            dist_blocks["block_11"]
-        )
-        C_12 = (
-            self.rho
-            * self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_12"])
-        )
-        C_21 = (
-            self.rho
-            * self.kernel_1.sigma
-            * self.kernel_2.sigma
-            * self.kernel_b.correlation(dist_blocks["block_21"])
-        )
-        C_22 = self.kernel_2.sigma ** 2 * self.kernel_2.correlation(
-            dist_blocks["block_22"]
-        )
-
-        # add nugget and measurement error variance along diagonals
-        np.fill_diagonal(C_11, C_11.diagonal() + self.kernel_1.nugget + self.sigep_11)
-        np.fill_diagonal(C_22, C_22.diagonal() + self.kernel_2.nugget + self.sigep_22)
-
-        # stack blocks into joint covariance matrix and normalize by standard deviation
-        cov_mat = np.block([[C_11, C_12], [C_21, C_22]])
-        return pre_post_diag(self.fields.joint_std_inverse, cov_mat)
 
 
 class FittedVariogram:
     """Model parameters and theoretical variogram for the correponding emprical variogram."""
 
     def __init__(
-        self, model: FullBivariateMatern, estimate: EmpiricalVariogram, cost: float
+        self, model: MultivariateMatern, estimate: EmpiricalVariogram, cost: float
     ) -> None:
         self.config = estimate.config
         self.timestamp = estimate.timestamp
@@ -388,28 +316,61 @@ class FittedVariogram:
         self.df_theoretical = model.variograms(h)
         self.params = model.params
         self.cost = cost
+        self.cs_valid = self.cs_check()
+
+    def cs_check(self):
+        """Check the Cauchy-Shwarz inequality. True passes; False fails."""
+        # constuct upper triangular object of covariances and cross-covariances
+
+        # check that np.all(diag[i] * diag[j] > element[i, j])
+
+        # check that list of bools is all true
+        return None
+
+
+# @vectorize([float64(float64, float64)], nopython=True)
+# @guvectorize([(float64, float64[:], float64[:])], "(),(n)->(n)", nopython=True)
+# NOTE: hiccup here is that variogram h is 1d but pred h is 2d
+def _mod_bessel(nu: float, h: float):
+    return sps.kv(nu, h)
+
+
+# @njit
+def _matern_correlation(nu: float, len_scale: float, h: np.ndarray) -> np.ndarray:
+    r"""Matern correlation function.
+
+    Parameters:
+        nu: smoothness parameter
+        len_scale: length scale parameter
+        h: array of spatial separation distances (lags), e.g., distance matrix
+
+    Returns:
+        array of correlations with dimension = shape(h)
+
+    .. math::
+        \rho(h) =
+        \frac{2^{1-\nu}}{\Gamma\left(\nu\right)} \cdot
+        \left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)^{\nu} \cdot
+        \mathrm{K}_{\nu}\left(\sqrt{2\nu}\cdot\frac{h}{\ell}\right)
+    """
+    # TODO: add check so that negative distances and correlation values yeild warning.
+    h = np.atleast_1d(np.abs(h))
+    # calculate by log-transformation to prevent numerical errors
+    h_positive_scaled = h[h > 0.0] / len_scale
+    corr = np.ones_like(h)
+    corr[h > 0.0] = np.exp(
+        (1.0 - nu) * np.log(2)
+        - sps.gammaln(nu)
+        + nu * np.log(np.sqrt(2.0 * nu) * h_positive_scaled)
+    ) * _mod_bessel(nu, np.sqrt(2.0 * nu) * h_positive_scaled)
+    # if nu >> 1 we get errors for the farfield, there 0 is approached
+    corr[np.logical_not(np.isfinite(corr))] = 0.0
+    # Matern correlation is positive
+    corr = np.maximum(corr, 0.0)
+    return corr
 
 
 @njit
 def _wls(ydata: np.ndarray, yfit: np.ndarray, bin_counts: np.ndarray) -> float:
     """Computes the weighted least squares cost specified by Cressie (1985)."""
     return np.sum(bin_counts * ((ydata - yfit) / yfit) ** 2)
-
-
-def _check_cauchyshwarz(covariograms, names):
-    """Check the Cauchy-Shwarz inequality."""
-    name1 = names[0]
-    name2 = names[1]
-    cross_name = f"{name1}:{name2}"
-
-    # NOTE: Not exactly C-S if minimum lag is not 0, but should be close
-    cov1_0 = covariograms[name1][
-        covariograms[name1]["lag"] == np.min(covariograms[name1]["lag"])
-    ][name1][0]
-    cov2_0 = covariograms[name2][
-        covariograms[name2]["lag"] == np.min(covariograms[name2]["lag"])
-    ][name2][0]
-    cross_cov = covariograms[cross_name][cross_name] ** 2
-
-    if np.any(cross_cov > cov1_0 * cov2_0):
-        warnings.warn("WARNING: Cauchy-Shwarz inequality not upheld.")

@@ -1,28 +1,3 @@
-"""
-Steps:
-[x] recover the data values along the main grid points only (i.e., original 4x5-degree grid)
-[x] setup prediction locations with resultion 0.5x0.5-degree (land only)
-[x] precompute the grand-covariance matrix blocks for all data locations
-[x] for a given prediction location, find the data indices within a max_dist for each dataset
-    [ ] if there are more than N points in that window, then subsample [rather than subsample, shrink the window]
-[x] collect the block covariance matrix and the stacked data vector at the correct indices
-[x] compute covariance arrays between prediction locations and data locations
-[x] verify local model using cholesky decomp (check that joint cov mat is not singular)
-[x] compute prediction of residual process
-[x] compute the uncertainty for the residuals
-[x] paralleize across prediction grid
-[x] post-process the predicted residuals
-    [x] predict the mean surface at prediction (standardized) locations or (standardized) evi [need to update EVI dataset for this]
-    [x] multiply predictions and errors by the scale factor
-    [x] add the (constant) spatial mean to predictions
-    [x] add the spatial trend surface to predictions
-    [x] add the temporal trend value to predictions
-
-TODO: 
- [x] allow for prediction of process [i] rather than process 0 only
- [x] prediction results plotting function
-"""
-
 import warnings
 from multiprocessing import cpu_count, Pool
 
@@ -258,7 +233,7 @@ class Predictor:
         df_ = df[["lon", "lat"]].copy()
 
         # Transform predictions and errors to original data scale
-        ds = ds * self.mf.fields[self.i].ds.attrs["scale_fact"]
+        ds *= self.mf.fields[self.i].ds.attrs["scale_fact"]
 
         # Add back the constant spatial mean used for standardization
         ds["pred"] += self.mf.fields[self.i].ds.attrs["spatial_mean"]

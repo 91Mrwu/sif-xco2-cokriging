@@ -362,7 +362,7 @@ def plot_variograms(
     fontsize: int = 12,
     filename: str = None,
 ):
-    # TODO: add bar chart (or number) indicating bin count
+    # TODO: add bar chart (or number) indicating bin count (see scikit-gstat for example)
     # TODO: provide parameters in table
     n_procs = fit_result.config.n_procs
     n_plots = triangular_number(n_procs)

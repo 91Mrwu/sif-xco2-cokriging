@@ -39,11 +39,6 @@ def fit_ols(ds: Dataset, data_name: str, covar_names: list):
     return ds_pred["ols_mean"], model
 
 
-def expand_grid(*args):
-    """Returns an array of all combinations of elements in the supplied vectors."""
-    return np.array(np.meshgrid(*args)).T.reshape(-1, len(args))
-
-
 def distance_matrix(
     X1: np.ndarray, X2: np.ndarray, units: str = "km", fast_dist: bool = False
 ) -> np.ndarray:

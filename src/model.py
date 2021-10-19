@@ -175,9 +175,12 @@ class MultivariateMatern:
     - Parameterization follows Rassmussen and Williams (2006; see MaternParams)
     """
 
-    def __init__(self, n_procs: int = 2) -> None:
+    def __init__(self, n_procs: int = 2, params: MaternParams = None) -> None:
         self.n_procs = n_procs
-        self.params = MaternParams(n_procs=n_procs)
+        if params is None:
+            self.params = MaternParams(n_procs=n_procs)
+        else:
+            self.params = params
         self.fit_result = None
 
     def correlation(self, i: int, j: int, h: np.ndarray) -> np.ndarray:

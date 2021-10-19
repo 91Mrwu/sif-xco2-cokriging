@@ -4,6 +4,7 @@ import pandas as pd
 import xarray as xr
 import statsmodels.api as sm
 
+from matplotlib import gridspec
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
@@ -22,6 +23,37 @@ XCO2_COLOR = "#4C72B0"
 SIF_COLOR = "#55A868"
 LINEWIDTH = 4
 ALPHA = 0.6
+
+
+def plot_samples(ds, cmap=cm.roma_r, title=None, fontsize=12, filename=None):
+    fig = plt.figure(figsize=(12, 5), constrained_layout=True)
+    gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 0.05])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1], sharey=ax1)
+    axes = dict(zip(ds.data_vars.keys(), [ax1, ax2]))
+    cbar_ax = fig.add_subplot(gs[2])
+
+    values = ds.to_dataframe().values
+    vmax = np.max(np.abs([np.nanmin(values), np.nanmax(values)]))
+    for name, da in ds.data_vars.items():
+        ax = axes[name]
+        im = xr.plot.imshow(
+            da.T,
+            vmax=vmax,
+            center=0,
+            cmap=cmap,
+            add_colorbar=False,
+            ax=ax,
+        )
+        ax.set_xlabel("d1", fontsize=fontsize)
+        ax.set_ylabel("d2", fontsize=fontsize)
+        ax.set_title(name, fontsize=fontsize)
+    fig.colorbar(im, cax=cbar_ax, label="Simulated values")
+    if title:
+        fig.suptitle(title, size=fontsize)
+
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
 def prep_axes(ax, extents):

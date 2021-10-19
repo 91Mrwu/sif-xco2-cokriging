@@ -9,6 +9,8 @@ from sklearn.linear_model import LinearRegression
 
 from stat_tools import standardize, simple_linear_regression
 
+EARTH_RADIUS = 6371  # radius in kilometers
+
 
 def fit_linear_trend(da: DataArray) -> DataArray:
     """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
@@ -55,13 +57,15 @@ def distance_matrix(
     X2 = np.atleast_2d(X2)
     if fast_dist:
         # great circle distances in kilometers
-        EARTH_RADIUS = 6371  # radius in kilometers
         X1_r = np.radians(X1)
         X2_r = np.radians(X2)
         return haversine_distances(X1_r, X2_r) * EARTH_RADIUS
-    else:
+    elif units is not None:
         # geodesic distances in specified units
         return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
+    else:
+        # Euclidean distance
+        return cdist(X1, X2)
 
 
 def get_group_ids(group: DataFrame):

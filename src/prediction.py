@@ -106,7 +106,6 @@ class Predictor:
                         # np.fill_diagonal(blocks[i, j], blocks[i, j].diagonal() + sigep[i])
                     else:
                         blocks[f"{i}{j}"] = self.mod.cross_covariance(i, j, h)
-        # NOTE: is normalization by data std necessary?
         return blocks
 
     def _pred_cov(self, dists: list) -> list:
@@ -119,7 +118,6 @@ class Predictor:
                 )
             else:
                 cov_vecs.append(self.mod.cross_covariance(self.i, j, dists[j]))
-        # NOTE: do these values need to be rescaled using the data std?
         return cov_vecs
 
     def _local_dist_ix(self, s0: np.ndarray, max_dist: float) -> tuple[list, list]:
@@ -195,7 +193,6 @@ class Predictor:
         local_data: np.ndarray,
     ) -> tuple[float, float]:
         """Local prediction and uncertainty calculations."""
-        # NOTE: should be safe to use overwrites with no finite check since this will be done in model verification
         cov_weights = cho_solve(
             cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
             local_pred_cov.copy(),
@@ -216,7 +213,6 @@ class Predictor:
         except LinAlgError:
             warnings.warn(f"Invalid model at prediction location {s0}. Returning NaN.")
             return np.nan, np.nan
-        # NOTE: do we need to scale pred_std by the data std (i.e., pre- post- diag multiply)?
         return self._pred_calc(c0, local_pred_cov, local_cov, local_data)
 
     def _predict_chunk(self, df_chunk: pd.DataFrame, c0: float, max_dist: float):

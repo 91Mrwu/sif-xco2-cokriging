@@ -42,7 +42,7 @@ class Predictor:
     def __call__(
         self,
         i: int,
-        pcoords: np.ndarray,
+        pcoords: pd.DataFrame,
         max_dist: float = 1e3,
         partitions: int = None,
         postprocess: bool = True,
@@ -60,8 +60,7 @@ class Predictor:
         """
         self.i = i
         c0 = self.mod.covariance(self.i, 0, use_nugget=True)[0]
-        df = pd.DataFrame(pcoords)
-        df.columns = ["lat", "lon"]
+        df = pcoords.copy()
 
         if partitions is not None:
             # run prediction in parallel across `n_partitions`
@@ -83,13 +82,13 @@ class Predictor:
         if postprocess:
             return self._postprocess_predictions(df_pred)
         else:
-            return (
-                df_pred.set_index(["lon", "lat"])
-                .to_xarray()
-                .assign_coords(
+            ds = df_pred.set_index(pcoords.columns.values.tolist()).to_xarray()
+            if np.isnan(self.mf.fields[self.i].timestamp):
+                return ds
+            else:
+                return ds.assign_coords(
                     coords={"time": np.datetime64(self.mf.fields[self.i].timestamp)}
                 )
-            )
 
     def _cov_blocks(self) -> dict:
         """Precomputes each block in the block-covariance matrix, with each block describing the dependence within a process or between processes."""
@@ -135,7 +134,12 @@ class Predictor:
         ix = [(d <= max_dist).squeeze() for d in dists]
         local_dists = [d[d <= max_dist] for d in dists]
         for d in local_dists:
-            assert d.max() <= max_dist
+            try:
+                d.max() <= max_dist
+            except ValueError:
+                warnings.warn(
+                    f"No data within `max_dist` at at prediction location ({s0})."
+                )
         return ix, local_dists
 
     def _local_values(
@@ -211,8 +215,10 @@ class Predictor:
         try:
             self._verify_model(c0, local_pred_cov, local_cov)
         except LinAlgError:
-            warnings.warn(f"Invalid model at prediction location {s0}. Returning NaN.")
-            return np.nan, np.nan
+            warnings.warn(
+                f"Invalid model at prediction location {s0}. This can happen at data"
+                " locations."
+            )
         return self._pred_calc(c0, local_pred_cov, local_cov, local_data)
 
     def _predict_chunk(self, df_chunk: pd.DataFrame, c0: float, max_dist: float):
@@ -277,4 +283,4 @@ def prediction_coords(
     """Produces prediction coordinates (land only)."""
     grid = GridConfig(extents=extents, lon_res=lon_res, lat_res=lat_res)
     df = land_grid(grid)
-    return df.reset_index()[["lat", "lon"]].values
+    return df.reset_index()[["lat", "lon"]]

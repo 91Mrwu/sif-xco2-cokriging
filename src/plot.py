@@ -56,6 +56,38 @@ def plot_samples(ds, cmap=cm.roma_r, title=None, fontsize=12, filename=None):
         fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
+def plot_sim_pred(ds, vmax=None, robust=False, title=None, fontsize=12, filename=None):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    xr.plot.imshow(
+        ds["pred"].T,
+        cmap=cm.roma_r,
+        vmax=vmax,
+        center=0,
+        robust=robust,
+        ax=axes[0],
+        cbar_kwargs={"label": ""},
+    )
+    xr.plot.imshow(
+        ds["pred_err"].T,
+        cmap=cm.lajolla_r,
+        vmin=0,
+        robust=robust,
+        ax=axes[1],
+        cbar_kwargs={"label": ""},
+    )
+    names = ["Predictions", "Prediction Standard Errors"]
+    for i, name in enumerate(names):
+        axes[i].set_xlabel("d1", fontsize=fontsize)
+        axes[i].set_ylabel("d2", fontsize=fontsize)
+        axes[i].set_title(name, fontsize=fontsize)
+
+    if title:
+        fig.suptitle(title, size=fontsize)
+
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
 def prep_axes(ax, extents):
     ax.add_feature(cfeature.OCEAN)
     ax.coastlines()
@@ -115,7 +147,7 @@ def plot_df(
     data_name,
     vmin=None,
     vmax=None,
-    cmap=cm.bamako.reversed(),
+    cmap=cm.bamako_r,
     s=2,
     title=None,
     label=None,
@@ -124,6 +156,7 @@ def plot_df(
 ):
     PROJ = ccrs.PlateCarree()
     extents = [-130, -60, 18, 60]
+    cmap = cmap.copy()
     fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
     prep_axes(ax, extents)
     plt.scatter(

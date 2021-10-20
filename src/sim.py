@@ -16,9 +16,11 @@ class CartesianGrid:
     ) -> None:
         xcoords = np.linspace(*xbounds, num=xcount)
         ycoords = np.linspace(*ybounds, num=ycount)
-        self.coords = self._expand_grid(xcoords, ycoords)
-        self.count = self.coords.shape[0]
-        self.dist = cdist(self.coords, self.coords)
+        self.coords = pd.DataFrame(
+            self._expand_grid(xcoords, ycoords), columns=["x", "y"]
+        )
+        self.count = len(self.coords)
+        self.dist = cdist(self.coords.values, self.coords.values)
 
     def _expand_grid(self, *args) -> np.ndarray:
         """Returns an array of all combinations of elements in the supplied vectors."""
@@ -35,10 +37,10 @@ class BivariateRandomField:
         self.rng = np.random.default_rng(seed)
         self.mod = model
         self.grid = grid
+        self.coords = grid.coords
         self.cmat = self._joint_cov_matrix()
         self.chol_fact_lower = cholesky(self.cmat, lower=True)
         self.fields = self._simulate()
-        self.coords = self.fields[0][["x", "y"]]
 
     def _joint_cov_matrix(self) -> dict:
         """Precomputes each block in the block-covariance matrix, with each block describing the dependence within a process or between processes."""
@@ -56,7 +58,7 @@ class BivariateRandomField:
         ]
         return [
             pd.DataFrame(
-                np.hstack((self.grid.coords, field_split[i])),
+                np.hstack((self.coords.values, field_split[i])),
                 columns=["x", "y", "value"],
             )
             for i in range(2)
@@ -85,7 +87,7 @@ class BivariateRandomField:
         frac: float = None,
         epsilon: list = [0],
         seed: int = None,
-    ) -> pd.DataFrame:
+    ) -> list:
         """
         Parameters:
             size: size of the required sample
@@ -110,33 +112,26 @@ class BivariateRandomField:
         samples = [pd.merge(self.fields[i], coords[i]) for i in range(2)]
         # apply measurement error
         for i, df in enumerate(samples):
-            df[f"Z{i}"] = df["value"].values + self.rng.normal(
-                scale=epsilon[i], size=size
-            )
-            df.drop(columns="value", inplace=True)
-        return pd.merge(*samples, how="outer")
+            df["value"] += self.rng.normal(scale=epsilon[i], size=size)
+            df.rename(columns={"value": f"Z{i}"}, inplace=True)
+        return samples
 
-    def to_xarray(self, samples: pd.DataFrame = None) -> xr.Dataset:
+    def to_xarray(self, samples: list = None) -> xr.Dataset:
         if samples is None:
             for i, df in enumerate(self.fields):
                 df.rename(columns={"value": f"Y{i}"}, inplace=True)
-            return (
-                pd.merge(*self.fields, how="outer")
-                # .merge(self.coords, how="outer")
-                .set_index(["x", "y"]).to_xarray()
-            )
+            return pd.merge(*self.fields, how="outer").set_index(["x", "y"]).to_xarray()
         else:
-            return (
-                samples.merge(self.coords, how="outer")
-                .set_index(["x", "y"])
-                .to_xarray()
-            )
+            return pd.merge(*samples, how="outer").set_index(["x", "y"]).to_xarray()
 
-    def to_fields(self, samples: pd.DataFrame) -> MultiField:
+    def to_fields(self, samples: list, i: int = None) -> MultiField:
         """Format bivariate samples as a MultiField."""
         ds = self.to_xarray(samples)
         datasets = list()
-        for i in range(2):
-            ds[f"Z{i}_var"] = np.nan
-            datasets.append(ds[[f"Z{i}", f"Z{i}_var"]])
-        return MultiField(datasets, None, np.nan, None, type="sim")
+        for j in range(2):
+            ds[f"Z{j}_var"] = np.nan
+            datasets.append(ds[[f"Z{j}", f"Z{j}_var"]])
+        if i is None:
+            return MultiField(datasets, None, np.nan, None, type="sim")
+        else:
+            return MultiField([datasets[i]], None, np.nan, None, type="sim")

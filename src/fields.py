@@ -79,13 +79,12 @@ class Field:
             self.scale_fact = self.ds.attrs["scale_fact"]
             self.variance_estimate = df[self.var_name].values
             self.covariates = df[covariates]
-            self.size = len(self.values)
         else:
             self.ds_main = ds.assign_coords(coords={"time": np.nan})
             df_main = self.to_dataframe(main=True)
-            self.coords_main = df_main[["y", "x"]].values
-            self.values_main = df_main[self.data_name].values
-            self.size = len(self.values_main)
+            self.coords = self.coords_main = df_main[["x", "y"]].values
+            self.values = self.values_main = df_main[self.data_name].values
+        self.size = len(self.values)
 
     def to_dataframe(self, main: bool = False):
         """Converts the field to a data frame."""
@@ -134,11 +133,11 @@ class MultiField:
         type: str = "real",
     ) -> None:
         self.type = type
+        self.datasets = datasets
         if type == "real":
             _check_length_match(datasets, covariates, timedeltas)
             self.timestamp = np.datetime_as_string(timestamp, unit="D")
             self.timedeltas = timedeltas
-            self.datasets = datasets
             self.covariates = covariates
             self.fields = np.array(
                 [
@@ -153,7 +152,7 @@ class MultiField:
             )
         else:
             self.timestamp = np.nan
-            self.datasets = datasets
+            self.timedeltas = [np.nan, np.nan]
             self.fields = np.array(
                 [
                     Field(datasets[i], None, np.nan, type=type)

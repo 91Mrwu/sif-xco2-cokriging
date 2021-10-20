@@ -55,23 +55,35 @@ class Field:
     Stores data values and coordinates for a single process at a fixed time in a data frame.
     """
 
-    def __init__(self, ds: Dataset, covariates: list, timestamp: np.datetime64) -> None:
+    def __init__(
+        self,
+        ds: Dataset,
+        covariates: list,
+        timestamp: np.datetime64,
+        type: str = "real",
+    ) -> None:
         self.timestamp = timestamp
         self.data_name, self.var_name = _get_field_names(ds)
-        self.ds = _preprocess_ds(ds, timestamp, covariates)
-        self.ds_main = get_main_coords(self.ds).sel(time=timestamp)
-        df = self.to_dataframe()
-        df_main = self.to_dataframe(main=True)
-        self.coords = df[["lat", "lon"]].values
-        self.coords_main = df_main[["lat", "lon"]].values
-        self.values = df[self.data_name].values
-        self.values_main = df_main[self.data_name].values
-        self.temporal_trend = self.ds.attrs["temporal_trend"]
-        self.spatial_trend = df["spatial_trend"].values
-        self.spatial_mean = self.ds.attrs["spatial_mean"]
-        self.scale_fact = self.ds.attrs["scale_fact"]
-        self.variance_estimate = df[self.var_name].values
-        self.covariates = df[covariates]
+        if type == "real":
+            self.ds = _preprocess_ds(ds, timestamp, covariates)
+            self.ds_main = get_main_coords(self.ds).sel(time=timestamp)
+            df = self.to_dataframe()
+            df_main = self.to_dataframe(main=True)
+            self.coords = df[["lat", "lon"]].values
+            self.coords_main = df_main[["lat", "lon"]].values
+            self.values = df[self.data_name].values
+            self.values_main = df_main[self.data_name].values
+            self.temporal_trend = self.ds.attrs["temporal_trend"]
+            self.spatial_trend = df["spatial_trend"].values
+            self.spatial_mean = self.ds.attrs["spatial_mean"]
+            self.scale_fact = self.ds.attrs["scale_fact"]
+            self.variance_estimate = df[self.var_name].values
+            self.covariates = df[covariates]
+        else:
+            self.ds_main = ds.assign_coords(coords={"time": np.nan})
+            df_main = self.to_dataframe(main=True)
+            self.coords = self.coords_main = df_main[["x", "y"]].values
+            self.values = self.values_main = df_main[self.data_name].values
         self.size = len(self.values)
 
     def to_dataframe(self, main: bool = False):
@@ -118,18 +130,35 @@ class MultiField:
         covariates: list[list],
         timestamp: np.datetime64,
         timedeltas: list[int],
+        type: str = "real",
     ) -> None:
-        _check_length_match(datasets, covariates, timedeltas)
-        self.timestamp = np.datetime_as_string(timestamp, unit="D")
-        self.timedeltas = timedeltas
+        self.type = type
         self.datasets = datasets
-        self.covariates = covariates
-        self.fields = np.array(
-            [
-                Field(datasets[i], covariates[i], self._apply_timedelta(timedeltas[i]))
-                for i in range(len(datasets))
-            ]
-        )
+        if type == "real":
+            _check_length_match(datasets, covariates, timedeltas)
+            self.timestamp = np.datetime_as_string(timestamp, unit="D")
+            self.timedeltas = timedeltas
+            self.covariates = covariates
+            self.fields = np.array(
+                [
+                    Field(
+                        datasets[i],
+                        covariates[i],
+                        self._apply_timedelta(timedeltas[i]),
+                        type=type,
+                    )
+                    for i in range(len(datasets))
+                ]
+            )
+        else:
+            self.timestamp = np.nan
+            self.timedeltas = [np.nan, np.nan]
+            self.fields = np.array(
+                [
+                    Field(datasets[i], None, np.nan, type=type)
+                    for i in range(len(datasets))
+                ]
+            )
         self.n_procs = len(self.fields)
         self.n_data = self._count_data()
 

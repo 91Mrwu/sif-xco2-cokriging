@@ -4,6 +4,7 @@ import pandas as pd
 import xarray as xr
 import statsmodels.api as sm
 
+from matplotlib import gridspec
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
@@ -22,6 +23,69 @@ XCO2_COLOR = "#4C72B0"
 SIF_COLOR = "#55A868"
 LINEWIDTH = 4
 ALPHA = 0.6
+
+
+def plot_samples(ds, cmap=cm.roma_r, title=None, fontsize=12, filename=None):
+    fig = plt.figure(figsize=(12, 5), constrained_layout=True)
+    gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 0.05])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1], sharey=ax1)
+    axes = dict(zip(ds.data_vars.keys(), [ax1, ax2]))
+    cbar_ax = fig.add_subplot(gs[2])
+
+    values = ds.to_dataframe().values
+    vmax = np.max(np.abs([np.nanmin(values), np.nanmax(values)]))
+    for name, da in ds.data_vars.items():
+        ax = axes[name]
+        im = xr.plot.imshow(
+            da.T,
+            vmax=vmax,
+            center=0,
+            cmap=cmap,
+            add_colorbar=False,
+            ax=ax,
+        )
+        ax.set_xlabel("d1", fontsize=fontsize)
+        ax.set_ylabel("d2", fontsize=fontsize)
+        ax.set_title(name, fontsize=fontsize)
+    fig.colorbar(im, cax=cbar_ax, label="Simulated values")
+    if title:
+        fig.suptitle(title, size=fontsize)
+
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
+def plot_sim_pred(ds, vmax=None, robust=False, title=None, fontsize=12, filename=None):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    xr.plot.imshow(
+        ds["pred"].T,
+        cmap=cm.roma_r,
+        vmax=vmax,
+        center=0,
+        robust=robust,
+        ax=axes[0],
+        cbar_kwargs={"label": ""},
+    )
+    xr.plot.imshow(
+        ds["pred_err"].T,
+        cmap=cm.lajolla_r,
+        vmin=0,
+        robust=robust,
+        ax=axes[1],
+        cbar_kwargs={"label": ""},
+    )
+    names = ["Predictions", "Prediction Standard Errors"]
+    for i, name in enumerate(names):
+        axes[i].set_xlabel("d1", fontsize=fontsize)
+        axes[i].set_ylabel("d2", fontsize=fontsize)
+        axes[i].set_title(name, fontsize=fontsize)
+
+    if title:
+        fig.suptitle(title, size=fontsize)
+
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)
 
 
 def prep_axes(ax, extents):
@@ -83,7 +147,7 @@ def plot_df(
     data_name,
     vmin=None,
     vmax=None,
-    cmap=cm.bamako.reversed(),
+    cmap=cm.bamako_r,
     s=2,
     title=None,
     label=None,
@@ -92,6 +156,7 @@ def plot_df(
 ):
     PROJ = ccrs.PlateCarree()
     extents = [-130, -60, 18, 60]
+    cmap = cmap.copy()
     fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
     prep_axes(ax, extents)
     plt.scatter(

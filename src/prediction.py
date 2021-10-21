@@ -6,10 +6,8 @@ import pandas as pd
 from xarray import Dataset, DataArray
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 
-from fields import MultiField
+from fields import MultiField, distance_matrix
 from model import MultivariateMatern
-from spatial_tools import distance_matrix
-from stat_tools import standardize
 from data_utils import GridConfig, land_grid
 
 # number of paritions for parallel computation
@@ -242,7 +240,7 @@ class Predictor:
 
         # Prepare the spatial covariate
         if self.covariates is None:
-            covariates = df[["lon", "lat"]]
+            covariates = df[["lon", "lat"]].copy()
         else:
             ds["covariates"] = self.covariates.sel(
                 time=self.mf.fields[self.i].timestamp
@@ -254,9 +252,13 @@ class Predictor:
                 .dropna(subset=["covariates"])
             )
             df_ = df_covariates[["lon", "lat"]].copy()
-            covariates = df_covariates[["covariates"]]
-        # standardize each covariate (each column)
-        covariates = covariates.apply(lambda x: standardize(x), axis=0)
+            covariates = df_covariates[["covariates"]].copy()
+        # standardize each covariate using mean and scale from fitting (so covariates are the same at data locations)
+        for i, covar in enumerate(covariates):
+            covariates[covar] = (
+                covariates[covar]
+                - self.mf.fields[self.i].ds.attrs["covariate_means"][i]
+            ) / self.mf.fields[self.i].ds.attrs["covariate_scales"][i]
 
         # Add back the spatial trend surface
         df_["ols_mean"] = (

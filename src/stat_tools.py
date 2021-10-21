@@ -5,15 +5,6 @@ import xarray
 from sklearn.linear_model import LinearRegression
 
 
-## Generic stats
-def standardize(x, unique=False):
-    """Stadardize the elements of the input vector (based on unique elements)."""
-    if unique:
-        return (x - np.unique(x).mean()) / np.unique(x).std()
-    else:
-        return (x - x.mean()) / x.std()
-
-
 ## Counts / replications
 def get_count(da):
     """

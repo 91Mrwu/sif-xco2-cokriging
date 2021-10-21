@@ -10,8 +10,7 @@ import scipy.special as sps
 import numba_scipy
 from scipy.optimize import minimize
 
-from spatial_tools import get_group_ids
-from fields import EmpiricalVariogram
+from fields import EmpiricalVariogram, get_group_ids
 
 
 class MarginalParam:

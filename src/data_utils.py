@@ -129,7 +129,7 @@ class GridConfig:
         lat_offset: float = 0,
     ) -> None:
         if not (lon_offset == 0 or lat_offset == 0):
-            raise ValueError("`lon_offset` and/or `lat_offset` must be zero")
+            warnings.warn("Neither offset is zero.")
         if extents is None:
             extents = (-180, 180, -90, 90)
         else:
@@ -277,6 +277,28 @@ def augment_dataset(ds: Dataset) -> pd.DataFrame:
     frame_list_lat = [prep_gridded_df(ds, config) for config in config_list_lat]
     frame_list_lon = [prep_gridded_df(ds, config) for config in config_list_lon]
     return pd.concat(frame_list_lat + frame_list_lon)
+
+
+def augment_dataset_pred(ds: Dataset) -> pd.DataFrame:
+    """Prepare gridded dataframes for each longitude and latitude offset, and return as a single dataframe."""
+    extents = (-125, -65, 22, 58)
+    lat_offsets = np.linspace(-1.5, 2, 8)
+    lon_offsets = np.linspace(-2, 2.5, 10)
+    offset_pairs = np.array(np.meshgrid(lat_offsets, lon_offsets)).T.reshape(-1, 2)
+
+    config_list = list()
+    for deltas in offset_pairs:
+        config_list.append(
+            GridConfig(
+                extents=extents,
+                lon_res=5,
+                lat_res=4,
+                lat_offset=deltas[0],
+                lon_offset=deltas[1],
+            )
+        )
+    frame_list = [prep_gridded_df(ds, config) for config in config_list]
+    return pd.concat(frame_list)
 
 
 def set_main_coords(

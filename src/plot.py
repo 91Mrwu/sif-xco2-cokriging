@@ -467,3 +467,30 @@ def plot_variograms(
 
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=100)
+
+
+def plot_err_ratio(
+    da,
+    vmin=None,
+    vmax=None,
+    robust=False,
+    cmap=cm.roma_r,
+    title=None,
+    fontsize=12,
+    filename=None,
+):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    xr.plot.imshow(
+        darray=da.T,
+        ax=ax,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        robust=robust,
+        cbar_kwargs={"label": "Error Ratio"},
+    )
+    ax.set_xlabel("d1", fontsize=fontsize)
+    ax.set_ylabel("d2", fontsize=fontsize)
+    ax.set_title(title, fontsize=fontsize)
+    if filename:
+        fig.savefig(f"../plots/{filename}.png", dpi=180)

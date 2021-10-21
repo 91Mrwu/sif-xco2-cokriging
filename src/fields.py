@@ -5,10 +5,16 @@ from dateutil.relativedelta import relativedelta
 
 import numpy as np
 import pandas as pd
-from xarray import Dataset
+from xarray import Dataset, DataArray
+from scipy.spatial.distance import cdist
+from geopy.distance import geodesic
+from sklearn.metrics.pairwise import haversine_distances
+from sklearn.linear_model import LinearRegression
 
-import spatial_tools
 from data_utils import get_main_coords
+from stat_tools import simple_linear_regression
+
+EARTH_RADIUS = 6371  # radius in kilometers
 
 
 class VarioConfig:
@@ -77,6 +83,8 @@ class Field:
             self.spatial_trend = df["spatial_trend"].values
             self.spatial_mean = self.ds.attrs["spatial_mean"]
             self.scale_fact = self.ds.attrs["scale_fact"]
+            self.covariate_means = self.ds.attrs["covariate_means"]
+            self.covariate_scales = self.ds.attrs["covariate_scales"]
             self.variance_estimate = df[self.var_name].values
             self.covariates = df[covariates]
         else:
@@ -179,9 +187,7 @@ class MultiField:
             coord_list = [self.fields[i].coords_main for i in ids]
         else:
             coord_list = [self.fields[i].coords for i in ids]
-        return spatial_tools.distance_matrix(
-            *coord_list, units=units, fast_dist=fast_dist
-        )
+        return distance_matrix(*coord_list, units=units, fast_dist=fast_dist)
 
     def _variogram_cloud(self, i: int, j: int, config: VarioConfig) -> pd.DataFrame:
         """Calculate the (cross-) variogram cloud for corresponding field id's."""
@@ -259,6 +265,13 @@ def _get_field_names(ds: Dataset):
     return data_name, var_name
 
 
+def get_group_ids(group: pd.DataFrame):
+    """Returns the group ids as a tuple (i, j)."""
+    i = group.index.get_level_values("i")[0]
+    j = group.index.get_level_values("j")[0]
+    return i, j
+
+
 def _median_abs_dev(x: np.ndarray) -> float:
     """Returns the median absolute deviation of the input array.
 
@@ -267,13 +280,75 @@ def _median_abs_dev(x: np.ndarray) -> float:
     return k * np.nanmedian(np.abs(x - np.nanmedian(x)))
 
 
+def fit_linear_trend(da: DataArray) -> DataArray:
+    """Computes the monthly average of all spatial locations, and removes the trend fit by a linear model."""
+    x = da.mean(dim=["lat", "lon"])
+    trend = simple_linear_regression(x.values)
+    return DataArray(trend, dims=["time"], coords={"time": da.time})
+
+
+def fit_ols(ds: Dataset, data_name: str, covar_names: list):
+    """Fit and predict the mean surface using ordinary least squares with standarized covariates. Keep track of the standardization statistics."""
+    df = (
+        ds.to_dataframe()
+        .drop(columns=["time", f"{data_name}_var"])
+        .dropna(subset=[data_name])
+        .reset_index()
+    )
+    if df.shape[0] == 0:  # no data
+        return ds[data_name] * np.nan
+
+    means = df[covar_names].mean(axis=0, skipna=True).values
+    scales = df[covar_names].std(axis=0, skipna=True).values
+    covariates = df[covar_names].copy()
+    for i, covar in enumerate(covar_names):
+        covariates[covar] = (covariates[covar] - means[i]) / scales[i]
+
+    model = LinearRegression().fit(covariates, df[data_name])
+    df = df[["lon", "lat"]]
+    df["ols_mean"] = model.predict(covariates)
+    ds_pred = (
+        df.set_index(["lon", "lat"])
+        .to_xarray()
+        .assign_coords(coords={"time": ds[data_name].time})
+    )
+    return ds_pred["ols_mean"], model, means, scales
+
+
+def distance_matrix(
+    X1: np.ndarray, X2: np.ndarray, units: str = "km", fast_dist: bool = False
+) -> np.ndarray:
+    """
+    Computes the geodesic (or great circle if fast_dist=True) distance among all pairs of points given two sets of coordinates.
+    Wrapper for scipy.spatial.distance.cdist using geopy.distance.geodesic as a the metric.
+
+    NOTE:
+    - points should be formatted in rows as [lat, lon]
+    - if fast_dist=True, units are kilometers regardless of specification
+    """
+    # enforce 2d array in case of single point
+    X1 = np.atleast_2d(X1)
+    X2 = np.atleast_2d(X2)
+    if fast_dist:
+        # great circle distances in kilometers
+        X1_r = np.radians(X1)
+        X2_r = np.radians(X2)
+        return haversine_distances(X1_r, X2_r) * EARTH_RADIUS
+    elif units is not None:
+        # geodesic distances in specified units
+        return cdist(X1, X2, lambda s_i, s_j: getattr(geodesic(s_i, s_j), units))
+    else:
+        # Euclidean distance
+        return cdist(X1, X2)
+
+
 def _preprocess_ds(ds: Dataset, timestamp: str, covariates: list) -> Dataset:
     """Apply data transformations and compute surface mean and standard deviation."""
     data_name, _ = _get_field_names(ds)
     ds_copy = ds.copy()
 
     # Remove linear trend over time
-    ds_copy["temporal_trend"] = spatial_tools.fit_linear_trend(ds_copy[data_name])
+    ds_copy["temporal_trend"] = fit_linear_trend(ds_copy[data_name])
     ds_copy[data_name] = ds_copy[data_name] - ds_copy["temporal_trend"]
 
     # Select data at timestamp (fields are spatial only)
@@ -281,9 +356,12 @@ def _preprocess_ds(ds: Dataset, timestamp: str, covariates: list) -> Dataset:
     ds_field.attrs["temporal_trend"] = ds_field["temporal_trend"].values
 
     # Remove the spatial trend by OLS
-    ds_field["spatial_trend"], ds_field.attrs["spatial_model"] = spatial_tools.fit_ols(
-        ds_field, data_name, covariates
-    )
+    (
+        ds_field["spatial_trend"],
+        ds_field.attrs["spatial_model"],
+        ds_field.attrs["covariate_means"],
+        ds_field.attrs["covariate_scales"],
+    ) = fit_ols(ds_field, data_name, covariates)
     ds_field[data_name] = ds_field[data_name] - ds_field["spatial_trend"]
 
     # Standardize the residuals

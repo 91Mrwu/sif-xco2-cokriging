@@ -10,6 +10,8 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+from matplotlib import rc_file_defaults
+import seaborn as sns
 
 # import cartopy.mpl.ticker as cticker
 from cmcrameri import cm
@@ -517,3 +519,19 @@ def plot_err_ratio(
     ax.set_title(title, fontsize=fontsize)
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
+def plot_cv_resid(df):
+    sns.set_theme()
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+    df_ = df.copy()
+    df_["std_resid"] = df_["residual"] / df_["pred_err"]
+    sns.histplot(x=df_["std_resid"], ax=ax[0])
+    sns.boxplot(x=df_["std_resid"], ax=ax[1])
+    for a in ax:
+        a.set_xlabel("Standardized Prediction Residuals")
+
+    mspe = np.round_(np.mean(df_["residual"] ** 2), decimals=5)
+    mape = np.round_(np.mean(np.abs(df_["residual"])), decimals=5)
+    fig.suptitle(f"MSPE: {mspe}, MAPE: {mape}")
+    rc_file_defaults()

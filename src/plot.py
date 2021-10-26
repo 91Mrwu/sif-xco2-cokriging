@@ -471,10 +471,12 @@ def plot_variograms(
 
 def plot_err_ratio(
     da,
+    loc1=None,
+    loc2=None,
     vmin=None,
     vmax=None,
     robust=False,
-    cmap=cm.roma_r,
+    cmap=cm.batlowW,
     title=None,
     fontsize=12,
     filename=None,
@@ -489,6 +491,27 @@ def plot_err_ratio(
         robust=robust,
         cbar_kwargs={"label": "Error Ratio"},
     )
+    if loc1 is not None:
+        ax.scatter(
+            loc1.x,
+            loc1.y,
+            s=50,
+            linewidths=2,
+            marker="d",
+            facecolor="None",
+            edgecolors="black",
+        )
+    if loc2 is not None:
+        ax.scatter(
+            loc2.x,
+            loc2.y,
+            alpha=0.5,
+            s=50,
+            linewidths=2,
+            marker="d",
+            facecolor="None",
+            edgecolors="white",
+        )
     ax.set_xlabel("d1", fontsize=fontsize)
     ax.set_ylabel("d2", fontsize=fontsize)
     ax.set_title(title, fontsize=fontsize)

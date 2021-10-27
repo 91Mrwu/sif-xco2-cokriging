@@ -142,9 +142,8 @@ class Predictor:
             try:
                 d.max() <= max_dist
             except ValueError:
-                warnings.warn(
-                    f"No data within `max_dist` at at prediction location ({s0})."
-                )
+                # No data within max_dist; handled in `_local_prediction()`
+                pass
         return ix, local_dists
 
     def _local_values(
@@ -207,7 +206,7 @@ class Predictor:
             local_pred_cov.copy(),
             overwrite_b=True,
             check_finite=False,
-        )
+        ).T
         pred = np.matmul(cov_weights, local_data)
         pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
         return pred, np.nanmax([pred_std, 0.0])
@@ -217,6 +216,11 @@ class Predictor:
     ) -> tuple[float, float]:
         """Compute the predicted value and prediction standard deviation at the specified location."""
         local_pred_cov, local_cov, local_data = self._local_values(s0, max_dist)
+        if local_data.size == 0:
+            warnings.warn(
+                f"No data within maximum distance {max_dist} at location {s0}."
+            )
+            return np.nan, np.nan
         try:
             self._verify_model(c0, local_pred_cov, local_cov)
         except LinAlgError:

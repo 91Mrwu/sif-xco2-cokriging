@@ -13,6 +13,10 @@ from data_utils import GridConfig, land_grid
 # number of paritions for parallel computation
 NCORES = cpu_count()
 
+"""
+NOTE: max_dist does not take into account the size of the data (too small or too large) should these be used in tandem?
+"""
+
 
 class Predictor:
     """Multivariate prediction framework."""
@@ -201,15 +205,21 @@ class Predictor:
         local_data: np.ndarray,
     ) -> tuple[float, float]:
         """Local prediction and uncertainty calculations."""
-        cov_weights = cho_solve(
-            cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
-            local_pred_cov.copy(),
-            overwrite_b=True,
-            check_finite=False,
-        ).T
-        pred = np.matmul(cov_weights, local_data)
-        pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
-        return pred, np.nanmax([pred_std, 0.0])
+        try:
+            cov_weights = cho_solve(
+                cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
+                local_pred_cov.copy(),
+                overwrite_b=True,
+                check_finite=False,
+            ).T
+            pred = np.matmul(cov_weights, local_data)
+            pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
+            return pred, np.nanmax([pred_std, 0.0])
+        except LinAlgError:
+            warnings.warn(
+                "Local covariance matrix not positive definte; returning NaN."
+            )
+            return np.nan, np.nan
 
     def _local_prediction(
         self, s0: np.ndarray, c0: float, max_dist: float

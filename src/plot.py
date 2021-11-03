@@ -1,6 +1,5 @@
 # Custom plotting wrappers
 import numpy as np
-import pandas as pd
 import xarray as xr
 import statsmodels.api as sm
 
@@ -10,15 +9,17 @@ import matplotlib.ticker as mticker
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+import seaborn as sns
 
 # import cartopy.mpl.ticker as cticker
 from cmcrameri import cm
 
-from data_utils import set_main_coords, get_main_coords, get_iterable
+from data_utils import get_iterable
 from fields import MultiField
 from model import FittedVariogram
 
 # Global settings
+plt.style.use("seaborn-deep")
 XCO2_COLOR = "#4C72B0"
 SIF_COLOR = "#55A868"
 LINEWIDTH = 4
@@ -481,7 +482,7 @@ def plot_err_ratio(
     fontsize=12,
     filename=None,
 ):
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     xr.plot.imshow(
         darray=da.T,
         ax=ax,
@@ -495,25 +496,42 @@ def plot_err_ratio(
         ax.scatter(
             loc1.x,
             loc1.y,
-            s=50,
-            linewidths=2,
-            marker="d",
-            facecolor="None",
-            edgecolors="black",
+            # s=50,
+            # linewidths=2,
+            marker="x",
+            facecolor="black",
+            # edgecolors="black",
         )
     if loc2 is not None:
         ax.scatter(
             loc2.x,
             loc2.y,
             alpha=0.5,
-            s=50,
-            linewidths=2,
-            marker="d",
-            facecolor="None",
-            edgecolors="white",
+            # s=50,
+            # linewidths=2,
+            marker="x",
+            facecolor="white",
+            # edgecolors="white",
         )
     ax.set_xlabel("d1", fontsize=fontsize)
     ax.set_ylabel("d2", fontsize=fontsize)
     ax.set_title(title, fontsize=fontsize)
     if filename:
         fig.savefig(f"../plots/{filename}.png", dpi=180)
+
+
+def plot_cv_resid(df, method=None, fontsize=12):
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    df_ = df.copy()
+    df_["std_resid"] = df_["residual"] / df_["pred_err"]
+    sns.histplot(x=df_["std_resid"], ax=ax[0])
+    sns.boxplot(x=df_["std_resid"], ax=ax[1])
+    for a in ax:
+        a.set_xlabel("Standardized Prediction Residuals", fontsize=fontsize)
+
+    mspe = np.round_(np.mean(df_["residual"] ** 2), decimals=5)
+    mape = np.round_(np.mean(np.abs(df_["residual"])), decimals=5)
+    fig.suptitle(
+        f"{method} LOOCV residual diagnostics\nMSPE: {mspe}, MAPE: {mape}",
+        fontsize=fontsize + 2,
+    )

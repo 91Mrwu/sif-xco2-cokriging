@@ -13,6 +13,10 @@ from data_utils import GridConfig, land_grid
 # number of paritions for parallel computation
 NCORES = cpu_count()
 
+"""
+NOTE: max_dist does not take into account the size of the data (too small or too large) should these be used in tandem?
+"""
+
 
 class Predictor:
     """Multivariate prediction framework."""
@@ -36,6 +40,7 @@ class Predictor:
         self.dist_units = dist_units
         self.fast_dist = fast_dist
         self.Sigma = self._cov_blocks()
+        self.cv = False  # placeholder for cross-validation
 
     def __call__(
         self,
@@ -52,6 +57,7 @@ class Predictor:
             pcoords: prediction coordinates with format [[lat, lon]]
             max_dist: maximum distance at which data values will be included in prediction
             partitions: number of partitions to split prediction locations into for parallelization
+            postprocess: should the `mf` and `covariates` attributes be used convert the predictions to scale of the original data?
 
         Returns:
             dataframe with predicted values and standard deviations at each location
@@ -81,9 +87,10 @@ class Predictor:
             return self._postprocess_predictions(df_pred)
         else:
             ds = df_pred.set_index(pcoords.columns.values.tolist()).to_xarray()
-            if np.isnan(self.mf.fields[self.i].timestamp):
+            try:
+                np.isnan(self.mf.fields[self.i].timestamp)
                 return ds
-            else:
+            except TypeError:
                 return ds.assign_coords(
                     coords={"time": np.datetime64(self.mf.fields[self.i].timestamp)}
                 )
@@ -129,15 +136,18 @@ class Predictor:
             for f in self.mf.fields
         ]
         # NOTE: may need to adjust max_dist if the size of any of these elements is larger than some n_max
-        ix = [(d <= max_dist).squeeze() for d in dists]
-        local_dists = [d[d <= max_dist] for d in dists]
+        conditions = [(d <= max_dist) for d in dists]
+        if self.cv:
+            # in the case of cross-validation, s0 is a data location and should be withheld
+            conditions[self.i] = (dists[self.i] > 0) & (dists[self.i] <= max_dist)
+        ix = [c_set.squeeze() for c_set in conditions]
+        local_dists = [d[c_set] for d, c_set in zip(dists, conditions)]
         for d in local_dists:
             try:
                 d.max() <= max_dist
             except ValueError:
-                warnings.warn(
-                    f"No data within `max_dist` at at prediction location ({s0})."
-                )
+                # No data within max_dist; handled in `_local_prediction()`
+                pass
         return ix, local_dists
 
     def _local_values(
@@ -195,21 +205,32 @@ class Predictor:
         local_data: np.ndarray,
     ) -> tuple[float, float]:
         """Local prediction and uncertainty calculations."""
-        cov_weights = cho_solve(
-            cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
-            local_pred_cov.copy(),
-            overwrite_b=True,
-            check_finite=False,
-        )
-        pred = np.matmul(cov_weights, local_data)
-        pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
-        return pred, np.nanmax([pred_std, 0.0])
+        try:
+            cov_weights = cho_solve(
+                cho_factor(local_cov, lower=True, overwrite_a=True, check_finite=False),
+                local_pred_cov.copy(),
+                overwrite_b=True,
+                check_finite=False,
+            ).T
+            pred = np.matmul(cov_weights, local_data)
+            pred_std = np.sqrt(c0 - np.matmul(cov_weights, local_pred_cov))
+            return pred, np.nanmax([pred_std, 0.0])
+        except LinAlgError:
+            warnings.warn(
+                "Local covariance matrix not positive definte; returning NaN."
+            )
+            return np.nan, np.nan
 
     def _local_prediction(
         self, s0: np.ndarray, c0: float, max_dist: float
     ) -> tuple[float, float]:
         """Compute the predicted value and prediction standard deviation at the specified location."""
         local_pred_cov, local_cov, local_data = self._local_values(s0, max_dist)
+        if local_data.size == 0:
+            warnings.warn(
+                f"No data within maximum distance {max_dist} at location {s0}."
+            )
+            return np.nan, np.nan
         try:
             self._verify_model(c0, local_pred_cov, local_cov)
         except LinAlgError:
@@ -251,6 +272,7 @@ class Predictor:
                 .merge(df_, on=["lon", "lat"], how="right")
                 .dropna(subset=["covariates"])
             )
+            # realign coordinates
             df_ = df_covariates[["lon", "lat"]].copy()
             covariates = df_covariates[["covariates"]].copy()
         # standardize each covariate using mean and scale from fitting (so covariates are the same at data locations)
@@ -277,6 +299,51 @@ class Predictor:
         ds["pred"] += self.mf.fields[self.i].ds.attrs["temporal_trend"]
 
         return ds
+
+    def cross_validation(
+        self,
+        i: int,
+        max_dist: float = 1e3,
+        partitions: int = None,
+        postprocess: bool = True,
+    ) -> pd.DataFrame:
+        """Leave one out cross-validation at each data location; i.e., prediction at each data location with the corresponding data value withheld.
+
+        Parameters: see __call__
+
+        Returns:
+            dataframe containg prediction residuals
+        """
+        self.cv = True
+        coord_names = ["d1", "d2"]
+        data = pd.DataFrame(
+            np.hstack(
+                (
+                    self.mf.fields[i].coords_main,
+                    np.atleast_2d(self.mf.fields[i].values_main).T,
+                )
+            ),
+            columns=coord_names + ["data"],
+        )
+        if postprocess:
+            coord_names = ["lat", "lon"]
+            data.rename(columns={"d1": "lat", "d2": "lon"}, inplace=True)
+        df = (
+            self.__call__(
+                i,
+                data[coord_names],
+                max_dist=max_dist,
+                partitions=partitions,
+                postprocess=postprocess,
+            )
+            .to_dataframe()
+            .reset_index()
+            .dropna(subset=["pred"])
+            .merge(data, on=coord_names, how="outer")
+        )
+        df["residual"] = df["data"] - df["pred"]
+        col_names = coord_names + ["data", "pred", "residual", "pred_err"]
+        return df[col_names]
 
 
 def prediction_coords(

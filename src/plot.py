@@ -532,6 +532,6 @@ def plot_cv_resid(df, method=None, fontsize=12):
     mspe = np.round_(np.mean(df_["residual"] ** 2), decimals=5)
     mape = np.round_(np.mean(np.abs(df_["residual"])), decimals=5)
     fig.suptitle(
-        f"{method} LOOCV residual diagnostics\nMSPE: {mspe}, MAPE: {mape}",
+        f"{method} LOOCV Residual Diagnostics\nMSPE: {mspe}, MAPE: {mape}",
         fontsize=fontsize + 2,
     )

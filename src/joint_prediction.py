@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from xarray import Dataset, DataArray
+import xarray as xr
 from scipy.linalg import cho_factor, cho_solve, LinAlgError
 
 from fields import MultiField, distance_matrix
@@ -17,7 +17,7 @@ class Predictor:
         self,
         mod: MultivariateMatern,
         mf: MultiField,
-        covariates: DataArray = None,
+        covariates: xr.DataArray = None,
         dist_units: str = "km",
         fast_dist: bool = True,
     ) -> None:
@@ -31,55 +31,55 @@ class Predictor:
         self.covariates = covariates
         self.dist_units = dist_units
         self.fast_dist = fast_dist
-        self.cv = False  # placeholder for use with cross-validation
 
     def __call__(
-        self,
-        i: int,
-        pcoords: pd.DataFrame,
-        postprocess: bool = True,
+        self, i: int, pcoords: pd.DataFrame, postprocess: bool = True, cv_ix: int = None
     ) -> pd.DataFrame:
         """Apply the multivariate local prediction at each location in the specified prediction coordinates.
 
         Parameters:
             i: index of the process to be predicted
             pcoords: prediction coordinates with format [[lat, lon]]
-            max_dist: maximum distance at which data values will be included in prediction
-            partitions: number of partitions to split prediction locations into for parallelization
             postprocess: should the `mf` and `covariates` attributes be used convert the predictions to scale of the original data?
+            cv_ix: index of the data value to remove in the case of cross-validation
 
         Returns:
             dataframe with predicted values and standard deviations at each location
         """
         self.i = i
         pred_cov = self._pred_cov(pcoords)
-        pred_cross_cov = self._pred_cross_cov(pcoords)
-        joint_cov = self._joint_cov()
-        try:
-            _verify_model(pred_cov, pred_cross_cov, joint_cov)
-        except LinAlgError:
-            warnings.warn(
-                "Prediction joint covariance matrix is not positive definte; model"
-                " technically invalid."
-            )
-
+        pred_cross_cov = self._pred_cross_cov(pcoords, cv_ix=cv_ix)
+        joint_cov = self._joint_cov(cv_ix=cv_ix)
+        data_values = [
+            self.mf.fields[i].values_main.copy() for i in range(self.n_procs)
+        ]
+        if cv_ix is not None:
+            pcoords = pd.DataFrame({"d1": pcoords[0], "d2": pcoords[1]}, index=[0])
+            data_values[self.i] = np.delete(data_values[self.i], cv_ix, axis=0)
+        else:
+            try:
+                _verify_model(pred_cov, pred_cross_cov, joint_cov)
+            except LinAlgError:
+                warnings.warn(
+                    "Prediction joint covariance matrix is not positive definte; model"
+                    " technically invalid."
+                )
+        stacked_data = np.hstack(data_values)
         cov_weights = cho_solve(
             cho_factor(joint_cov, lower=True, overwrite_a=True, check_finite=False),
             pred_cross_cov.copy(),
             overwrite_b=True,
             check_finite=False,
         ).T
-        stacked_data = np.hstack(
-            [self.mf.fields[i].values_main for i in range(self.n_procs)]
-        )
-        # NOTE: may choose to return the full variance-covariance matrix in the future
         pred_var_cov_mat = pred_cov - np.matmul(cov_weights, pred_cross_cov)
 
         df_pred = pcoords.copy()
         df_pred["pred"] = np.matmul(cov_weights, stacked_data)
         df_pred["pred_err"] = np.nan_to_num(np.sqrt(np.diagonal(pred_var_cov_mat)))
 
+        # NOTE: may choose to return the full variance-covariance matrix in the future
         if postprocess:
+            df_pred.rename(columns={"d1": "lat", "d2": "lon"}, inplace=True)
             return self._postprocess_predictions(df_pred)
         else:
             ds = df_pred.set_index(pcoords.columns.values.tolist()).to_xarray()
@@ -101,7 +101,7 @@ class Predictor:
         )
         return self.mod.covariance(self.i, dists, use_nugget=True)
 
-    def _pred_cross_cov(self, pcoords: np.ndarray) -> np.ndarray:
+    def _pred_cross_cov(self, pcoords: np.ndarray, cv_ix: int = None) -> np.ndarray:
         """Computes the covariance and cross-covariance vectors between data and prediction locations."""
         dists = [
             distance_matrix(
@@ -109,6 +109,8 @@ class Predictor:
             )
             for f in self.mf.fields
         ]
+        if cv_ix is not None:
+            dists[self.i] = np.delete(dists[self.i], cv_ix, axis=0)
         cov_vecs = list()
         for j in range(self.n_procs):
             if self.i == j:
@@ -119,22 +121,29 @@ class Predictor:
                 cov_vecs.append(self.mod.cross_covariance(self.i, j, dists[j]))
         return np.vstack(cov_vecs)
 
-    def _joint_cov(self) -> np.ndarray:
+    def _joint_cov(self, cv_ix: int = None) -> np.ndarray:
         """Compute each block component with each block describing the dependence within a process or between processes; return the block-covariance matrix."""
         blocks = dict()
         for i in range(self.n_procs):
             for j in range(self.n_procs):
                 if i <= j:
-                    h = self.mf.calc_dist_matrix(
+                    dists = self.mf.calc_dist_matrix(
                         (i, j), self.dist_units, self.fast_dist, main=True
                     )
                     if i == j:
-                        blocks[f"{i}{j}"] = self.mod.covariance(i, h)
+                        blocks[f"{i}{j}"] = self.mod.covariance(i, dists)
                     else:
-                        blocks[f"{i}{j}"] = self.mod.cross_covariance(i, j, h)
+                        blocks[f"{i}{j}"] = self.mod.cross_covariance(i, j, dists)
                 else:
                     # blocks in lower-triangle are the transpose of the upper-triangle
-                    blocks[f"{i}{j}"] = blocks[f"{j}{i}"].T
+                    blocks[f"{i}{j}"] = blocks[f"{j}{i}"].T.copy()
+        if cv_ix is not None:
+            for i in range(self.n_procs):
+                for j in range(self.n_procs):
+                    if i == self.i:
+                        blocks[f"{i}{j}"] = np.delete(blocks[f"{i}{j}"], cv_ix, axis=0)
+                    if j == self.i:
+                        blocks[f"{i}{j}"] = np.delete(blocks[f"{i}{j}"], cv_ix, axis=1)
 
         return np.block(
             [
@@ -143,7 +152,7 @@ class Predictor:
             ]
         )
 
-    def _postprocess_predictions(self, df: pd.DataFrame) -> Dataset:
+    def _postprocess_predictions(self, df: pd.DataFrame) -> xr.Dataset:
         """Convert prediction results to a dataset and transform to original data scale."""
         ds = df.set_index(["lon", "lat"]).to_xarray()
         df_ = df[["lon", "lat"]].copy()
@@ -207,8 +216,12 @@ class Predictor:
         Returns:
             dataframe containg prediction residuals
         """
-        self.cv = True
-        coord_names = ["d1", "d2"]
+        if postprocess:
+            coord_names = ["lat", "lon"]
+        else:
+            coord_names = ["d1", "d2"]
+
+        # prepare data the data; each row will be withheld then predicted
         data = pd.DataFrame(
             np.hstack(
                 (
@@ -218,17 +231,22 @@ class Predictor:
             ),
             columns=coord_names + ["data"],
         )
-        if postprocess:
-            coord_names = ["lat", "lon"]
-            data.rename(columns={"d1": "lat", "d2": "lon"}, inplace=True)
-        df = (
-            self.__call__(
-                i,
-                data[coord_names],
-                max_dist=max_dist,
-                partitions=partitions,
-                postprocess=postprocess,
+
+        # compute predictions row by row
+        list_ds = list()
+        for ix, p in data[coord_names].iterrows():
+            list_ds.append(
+                self.__call__(
+                    i,
+                    p.values,
+                    postprocess=postprocess,
+                    cv_ix=ix,
+                )
             )
+
+        # merge predictions with data and compute difference
+        df = (
+            xr.merge(list_ds)
             .to_dataframe()
             .reset_index()
             .dropna(subset=["pred"])

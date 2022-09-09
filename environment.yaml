@@ -1,18 +1,11 @@
-name: conda-env
+name: geostat
 channels:
-  - defaults
   - conda-forge
-  # - r
 dependencies:
-  # R tools
-  # - r-essentials
-  # - r-base
-  # - r-tidyverse
-  # - rstudio
   # Core python
-  - jupyter
-  # - jupyterlab
-  # - jupyterlab-git
+  - python=3.9
+  - black
+  - jupyterlab
   - numpy
   - numba
   - pandas
@@ -23,9 +16,12 @@ dependencies:
   - regionmask
   # Data management
   - xarray
+  - rioxarray
   - dask
   - netcdf4
   - h5netcdf
+  - h5py
+  - rasterio
   # Statistics / ML
   - scikit-learn
   - statsmodels
@@ -33,6 +29,4 @@ dependencies:
   - matplotlib
   - seaborn
   - cartopy
-  # - ffmpeg
-  # - palettable
   - cmcrameri

@@ -1,2 +1,2 @@
-# sif-data-fusion
-Statistical data-fusion of OCO-2 and OCO-3 L2 SIF products
+# sif-xco2-cokriging
+Spatial statistical prediction of solar-induced chlorophyll fluorescence (SIF) from multivariate OCO-2 data

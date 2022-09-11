@@ -1,4 +1,5 @@
 # Custom plotting wrappers
+from copy import deepcopy
 import numpy as np
 import xarray as xr
 import statsmodels.api as sm
@@ -157,7 +158,7 @@ def plot_df(
 ):
     PROJ = ccrs.PlateCarree()
     extents = [-130, -60, 18, 60]
-    cmap = cmap.copy()
+    cmap = deepcopy(cmap)
     fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={"projection": PROJ})
     prep_axes(ax, extents)
     plt.scatter(

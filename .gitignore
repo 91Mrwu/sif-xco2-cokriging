@@ -3,6 +3,8 @@ figures
 data
 research/tmp
 *.DS_Store
+*.nc
+*.csv
 *.mp4
 
 # Byte-compiled / optimized / DLL files
